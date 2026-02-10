@@ -353,7 +353,15 @@ jobs:
           KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           POSTGRES_USER: ${{ secrets.POSTGRES_USER || 'locaweb' }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'locaweb' }}
-        run: kamal setup
+        run: |
+          # Remove stale accessories from previous failed deployments
+          kamal accessory remove --all --confirmed 2>/dev/null || true
+          # Clean postgres data dir on DB host (in case of corrupted init)
+          DB_HOST=$(python3 -c "import json; print(json.load(open('/tmp/provision-output.json')).get('db_ip', ''))")
+          if [ -n "$DB_HOST" ]; then
+            ssh -i .kamal/ssh_key -o StrictHostKeyChecking=no root@"$DB_HOST" 'rm -rf /data/db/*' 2>/dev/null || true
+          fi
+          kamal setup
 
       - name: Print Kamal deployment summary
         run: |
