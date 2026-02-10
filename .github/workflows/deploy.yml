@@ -58,7 +58,7 @@ on:
       workers_cmd:
         description: "Command for worker containers"
         required: false
-        default: "while true; do echo 'worker running'; sleep 60; done"
+        default: "sleep infinity"
       workers_plan:
         description: "Worker VM plan"
         type: choice
