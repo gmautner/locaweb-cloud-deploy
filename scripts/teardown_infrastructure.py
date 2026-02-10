@@ -25,21 +25,32 @@ import sys
 import time
 
 
+CMK_MAX_RETRIES = 5
+
+
 def cmk(*args):
     """Run a cmk command and return parsed JSON.
 
-    Unlike the provisioning script, errors here are non-fatal warnings
+    Retries up to CMK_MAX_RETRIES times with exponential backoff
+    (2, 4, 8, 16, 32s) to handle intermittent CloudStack API errors.
+    Unlike the provisioning script, final errors are non-fatal warnings
     since resources may already be partially deleted.
     """
     cmd = ["cmk"] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    for attempt in range(CMK_MAX_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            if not result.stdout.strip():
+                return {}
+            return json.loads(result.stdout)
         error_msg = result.stderr.strip() or result.stdout.strip()
-        print(f"  Warning: cmk {' '.join(args)}: {error_msg}")
-        return None
-    if not result.stdout.strip():
-        return {}
-    return json.loads(result.stdout)
+        if attempt < CMK_MAX_RETRIES:
+            backoff = 2 ** (attempt + 1)
+            print(f"  Retry {attempt + 1}/{CMK_MAX_RETRIES}: cmk {' '.join(args)}: {error_msg} (backoff {backoff}s)")
+            time.sleep(backoff)
+        else:
+            print(f"  Warning: cmk {' '.join(args)} failed after {CMK_MAX_RETRIES + 1} attempts: {error_msg}")
+            return None
 
 
 def teardown(network_name):

@@ -26,6 +26,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -46,16 +47,29 @@ DB_USERDATA = os.path.join(SCRIPT_DIR, "userdata", "db_vm.sh")
 # CloudMonkey helpers
 # ---------------------------------------------------------------------------
 
+CMK_MAX_RETRIES = 5
+
+
 def cmk(*args):
-    """Run a cmk command and return parsed JSON."""
+    """Run a cmk command and return parsed JSON.
+
+    Retries up to CMK_MAX_RETRIES times with exponential backoff
+    (2, 4, 8, 16, 32s) to handle intermittent CloudStack API errors.
+    """
     cmd = ["cmk"] + list(args)
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
+    for attempt in range(CMK_MAX_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            if not result.stdout.strip():
+                return {}
+            return json.loads(result.stdout)
         error_msg = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"cmk {' '.join(args)} failed: {error_msg}")
-    if not result.stdout.strip():
-        return {}
-    return json.loads(result.stdout)
+        if attempt < CMK_MAX_RETRIES:
+            backoff = 2 ** (attempt + 1)
+            print(f"  Retry {attempt + 1}/{CMK_MAX_RETRIES}: cmk {' '.join(args)}: {error_msg} (backoff {backoff}s)")
+            time.sleep(backoff)
+        else:
+            raise RuntimeError(f"cmk {' '.join(args)} failed after {CMK_MAX_RETRIES + 1} attempts: {error_msg}")
 
 
 def cmk_quiet(*args):

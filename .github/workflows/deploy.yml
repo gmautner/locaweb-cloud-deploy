@@ -146,6 +146,7 @@ jobs:
           cmk set apikey "$CLOUDSTACK_API_KEY"
           cmk set secretkey "$CLOUDSTACK_SECRET_KEY"
           cmk set output json
+          cmk sync
           echo "Verifying CloudStack connectivity..."
           cmk list zones filter=name
           echo "CloudMonkey configured successfully."
