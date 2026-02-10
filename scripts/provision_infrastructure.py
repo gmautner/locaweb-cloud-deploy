@@ -93,6 +93,12 @@ def resolve_zone(zone_name):
     raise RuntimeError(f"Zone '{zone_name}' not found")
 
 
+def resolve_all_zone_ids():
+    """Resolve all available zone IDs (for snapshot replication)."""
+    data = cmk("list", "zones", "filter=id")
+    return [z["id"] for z in data.get("zone", [])]
+
+
 def resolve_network_offering(name):
     """Resolve network offering name to ID."""
     data = cmk("list", "networkofferings", "filter=id,name")
@@ -285,7 +291,7 @@ def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
     return vol_id
 
 
-def create_snapshot_policy(vol_id, network_name, desc):
+def create_snapshot_policy(vol_id, network_name, snapshot_zoneids, desc):
     """Create daily snapshot policy if one does not already exist."""
     existing = cmk_quiet("list", "snapshotpolicies", f"volumeid={vol_id}")
     if existing and existing.get("snapshotpolicy"):
@@ -297,7 +303,7 @@ def create_snapshot_policy(vol_id, network_name, desc):
             f"schedule={SNAPSHOT_SCHEDULE}",
             f"maxsnaps={SNAPSHOT_MAX}",
             f"timezone={SNAPSHOT_TIMEZONE}",
-            "zoneids=ZP01,ZP02",
+            f"zoneids={snapshot_zoneids}",
             "tags[0].key=locaweb-ai-deploy-id",
             f"tags[0].value={network_name}")
         print(f"  {desc}: daily snapshot policy created")
@@ -349,6 +355,8 @@ def provision(config, repo_name, unique_id, public_key):
     # --- Resolve all names to IDs ---
     print("Resolving infrastructure names...")
     zone_id = resolve_zone(zone_name)
+    all_zone_ids = resolve_all_zone_ids()
+    snapshot_zoneids = ",".join(all_zone_ids)
     net_offering_id = resolve_network_offering(NETWORK_OFFERING_NAME)
     disk_offering_id = resolve_disk_offering(DISK_OFFERING_NAME)
     web_offering_id = resolve_service_offering(web_plan)
@@ -513,9 +521,9 @@ def provision(config, repo_name, unique_id, public_key):
 
     # --- Snapshot Policies ---
     print("\nCreating snapshot policies...")
-    create_snapshot_policy(blob_vol_id, network_name, "Blob disk")
+    create_snapshot_policy(blob_vol_id, network_name, snapshot_zoneids, "Blob disk")
     if db_enabled:
-        create_snapshot_policy(db_vol_id, network_name, "DB disk")
+        create_snapshot_policy(db_vol_id, network_name, snapshot_zoneids, "DB disk")
 
     # --- Internal IPs ---
     print("\nRetrieving internal IPs...")
