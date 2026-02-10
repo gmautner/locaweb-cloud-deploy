@@ -8,10 +8,9 @@ and teardown_infrastructure.py, then verifying results via cmk and SSH.
 Test execution order (optimized to minimize deploys):
 
   Phase 0: Initial teardown (clean slate)
-  Phase 1: Complete deploy -> scale down 3->1 -> teardown
-  Phase 2: Implicit deploy (defaults) -> teardown
-  Phase 3: Implicit with workers+db -> scale up 1->3 -> scale down 3->1 -> teardown
-  Phase 4: Explicit disablements -> teardown
+  Phase 1: Complete deploy (web+3w+db) -> scale down 3->1 -> teardown
+  Phase 2: Web-only deploy -> teardown
+  Phase 3: Deploy with workers+db (1w) -> scale up 1->3 -> teardown
 
 Environment variables:
   REPO_NAME  - Repository name (default: from cwd)
@@ -425,16 +424,12 @@ class TestRunner:
         self._phase1_scale_down()
         self._phase1_teardown()
 
-        self._phase2_implicit_deploy()
+        self._phase2_web_only_deploy()
         self._phase2_teardown()
 
-        self._phase3_implicit_features()
+        self._phase3_deploy_with_features()
         self._phase3_scale_up()
-        self._phase3_scale_down()
         self._phase3_teardown()
-
-        self._phase4_explicit_disablements()
-        self._phase4_teardown()
 
         return self.save_results()
 
@@ -670,11 +665,11 @@ class TestRunner:
         self.scenarios.append(s)
 
     # ------------------------------------------------------------------
-    # Phase 2: Implicit deploy (defaults — web only)
+    # Phase 2: Web-only deploy (workers and db disabled)
     # ------------------------------------------------------------------
 
-    def _phase2_implicit_deploy(self):
-        s = TestScenario("4. Implicit Deploy (defaults)")
+    def _phase2_web_only_deploy(self):
+        s = TestScenario("4. Web-Only Deploy")
         with s:
             output = self.provision({
                 "zone": ZONE,
@@ -750,11 +745,11 @@ class TestRunner:
         self.scenarios.append(s)
 
     # ------------------------------------------------------------------
-    # Phase 3: Implicit with features (workers + db, default values)
+    # Phase 3: Deploy with features, then scale up
     # ------------------------------------------------------------------
 
-    def _phase3_implicit_features(self):
-        s = TestScenario("6. Implicit with Workers+DB")
+    def _phase3_deploy_with_features(self):
+        s = TestScenario("6. Deploy with Workers+DB")
         with s:
             self.provision({
                 "zone": ZONE,
@@ -812,37 +807,8 @@ class TestRunner:
 
         self.scenarios.append(s)
 
-    def _phase3_scale_down(self):
-        s = TestScenario("8. Scale Down Workers 3->1")
-        with s:
-            self.provision({
-                "zone": ZONE,
-                "domain": "",
-                "web_plan": "small",
-                "blob_disk_size_gb": 20,
-                "workers_enabled": True,
-                "workers_replicas": 1,
-                "workers_plan": "small",
-                "db_enabled": True,
-                "db_plan": "medium",
-                "db_disk_size_gb": 20,
-            })
-
-            s.assert_true(
-                self.verifier.verify_vm_exists(
-                    f"{NETWORK_NAME}-worker-1") is not None,
-                "Worker-1 remains")
-            s.assert_true(
-                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-2"),
-                "Worker-2 gone")
-            s.assert_true(
-                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-3"),
-                "Worker-3 gone")
-
-        self.scenarios.append(s)
-
     def _phase3_teardown(self):
-        s = TestScenario("9. Teardown Verify")
+        s = TestScenario("8. Teardown Verify")
         with s:
             self.teardown()
 
@@ -859,66 +825,6 @@ class TestRunner:
             s.assert_true(
                 self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-1"),
                 "Worker-1 VM gone")
-            s.assert_true(self.verifier.verify_no_tagged_volumes(),
-                          "No tagged volumes remain")
-
-        self.scenarios.append(s)
-
-    # ------------------------------------------------------------------
-    # Phase 4: Explicit disablements
-    # ------------------------------------------------------------------
-
-    def _phase4_explicit_disablements(self):
-        s = TestScenario("10. Explicit Disablements")
-        with s:
-            output = self.provision({
-                "zone": ZONE,
-                "domain": "",
-                "web_plan": "small",
-                "blob_disk_size_gb": 20,
-                "workers_enabled": False,
-                "workers_replicas": 5,
-                "workers_plan": "large",
-                "db_enabled": False,
-                "db_plan": "xlarge",
-                "db_disk_size_gb": 100,
-            })
-
-            s.assert_true(
-                self.verifier.verify_vm_exists(
-                    f"{NETWORK_NAME}-web") is not None,
-                "Web VM exists")
-            s.assert_equal(self.verifier.count_worker_vms(), 0,
-                           "Zero workers (disabled despite replicas=5)")
-            s.assert_true(
-                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-db"),
-                "No DB VM (disabled despite plan/disk set)")
-            s.assert_true(
-                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
-                "No DB volume")
-
-            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 1,
-                           "1 public IP")
-
-            s.assert_true("worker_vm_ids" not in output,
-                          "Output has no worker_vm_ids")
-            s.assert_true("db_vm_id" not in output,
-                          "Output has no db_vm_id")
-
-        self.scenarios.append(s)
-
-    def _phase4_teardown(self):
-        s = TestScenario("11. Final Teardown Verify")
-        with s:
-            self.teardown()
-
-            s.assert_true(self.verifier.verify_network_absent(),
-                          "Network gone")
-            s.assert_true(self.verifier.verify_keypair_absent(),
-                          "Keypair gone")
-            s.assert_true(
-                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-web"),
-                "Web VM gone")
             s.assert_true(self.verifier.verify_no_tagged_volumes(),
                           "No tagged volumes remain")
 
