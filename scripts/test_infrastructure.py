@@ -1,0 +1,959 @@
+#!/usr/bin/env python3
+"""
+End-to-end infrastructure test suite for Locaweb CloudStack deployment.
+
+Validates all deployment scenarios by calling provision_infrastructure.py
+and teardown_infrastructure.py, then verifying results via cmk and SSH.
+
+Test execution order (optimized to minimize deploys):
+
+  Phase 0: Initial teardown (clean slate)
+  Phase 1: Complete deploy -> scale down 3->1 -> teardown
+  Phase 2: Implicit deploy (defaults) -> teardown
+  Phase 3: Implicit with workers+db -> scale up 1->3 -> scale down 3->1 -> teardown
+  Phase 4: Explicit disablements -> teardown
+
+Environment variables:
+  REPO_NAME  - Repository name (default: from cwd)
+  UNIQUE_ID  - Unique identifier for resource isolation (default: "test")
+  ZONE       - CloudStack zone (default: "ZP01")
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+import traceback
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+REPO_NAME = os.environ.get("REPO_NAME", "locaweb-ai-deploy")
+UNIQUE_ID = os.environ.get("UNIQUE_ID", "test")
+ZONE = os.environ.get("ZONE", "ZP01")
+NETWORK_NAME = f"{REPO_NAME}-{UNIQUE_ID}"
+
+SSH_KEY_PATH = "/tmp/ssh_key"
+PUBLIC_KEY_PATH = "/tmp/ssh_key.pub"
+PROVISION_OUTPUT = "/tmp/provision-output-test.json"
+RESULTS_PATH = "/tmp/test-results.json"
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROVISION_SCRIPT = os.path.join(SCRIPT_DIR, "provision_infrastructure.py")
+TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown_infrastructure.py")
+
+CMK_MAX_RETRIES = 5
+
+
+# ---------------------------------------------------------------------------
+# CloudMonkey helper
+# ---------------------------------------------------------------------------
+
+def cmk(*args):
+    """Run a cmk command with retry logic. Returns parsed JSON or None."""
+    cmd = ["cmk"] + list(args)
+    for attempt in range(CMK_MAX_RETRIES + 1):
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            if not result.stdout.strip():
+                return {}
+            return json.loads(result.stdout)
+        error_msg = result.stderr.strip() or result.stdout.strip()
+        if attempt < CMK_MAX_RETRIES:
+            backoff = 2 ** (attempt + 1)
+            print(f"    cmk retry {attempt + 1}/{CMK_MAX_RETRIES}: {error_msg} (backoff {backoff}s)")
+            time.sleep(backoff)
+        else:
+            print(f"    cmk failed after {CMK_MAX_RETRIES + 1} attempts: {error_msg}")
+            return None
+
+
+# ---------------------------------------------------------------------------
+# SSH Verifier
+# ---------------------------------------------------------------------------
+
+class SSHVerifier:
+    """SSH connectivity and remote command execution."""
+
+    def __init__(self, key_path=SSH_KEY_PATH):
+        self.key_path = key_path
+        self.ssh_opts = [
+            "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null",
+            "-o", "ConnectTimeout=10",
+            "-o", "BatchMode=yes",
+            "-i", self.key_path,
+        ]
+
+    def wait_for_ssh(self, ip, timeout=180):
+        """Poll SSH every 10s until it responds or timeout is reached."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rc, _, _ = self.run_command(ip, "true")
+            if rc == 0:
+                return True
+            time.sleep(10)
+        return False
+
+    def run_command(self, ip, command):
+        """Run a remote command via SSH. Returns (rc, stdout, stderr)."""
+        cmd = ["ssh"] + self.ssh_opts + [f"root@{ip}", command]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            return result.returncode, result.stdout.strip(), result.stderr.strip()
+        except subprocess.TimeoutExpired:
+            return 1, "", "SSH command timed out"
+
+    def verify_mount_point(self, ip, path, timeout=120):
+        """Poll mountpoint with retry (cloud-init may still be running)."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            rc, _, _ = self.run_command(ip, f"mountpoint -q {path}")
+            if rc == 0:
+                return True
+            time.sleep(10)
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Infrastructure Verifier
+# ---------------------------------------------------------------------------
+
+class InfrastructureVerifier:
+    """cmk-based resource verification."""
+
+    def __init__(self, network_name):
+        self.network_name = network_name
+        self.keypair_name = f"{network_name}-key"
+
+    # --- Network ---
+
+    def get_network_id(self):
+        data = cmk("list", "networks", "filter=id,name")
+        if data:
+            for n in data.get("network", []):
+                if n["name"] == self.network_name:
+                    return n["id"]
+        return None
+
+    def verify_network_exists(self):
+        return self.get_network_id() is not None
+
+    def verify_network_absent(self):
+        return self.get_network_id() is None
+
+    # --- VMs ---
+
+    def verify_vm_exists(self, name):
+        """Return VM dict if found, else None."""
+        data = cmk("list", "virtualmachines", f"name={name}",
+                    "filter=id,name,state")
+        if data:
+            for vm in data.get("virtualmachine", []):
+                if vm["name"] == name:
+                    return vm
+        return None
+
+    def verify_vm_absent(self, name):
+        return self.verify_vm_exists(name) is None
+
+    def count_worker_vms(self):
+        """Scan worker-1, worker-2, ... until not found."""
+        count = 0
+        i = 1
+        while True:
+            name = f"{self.network_name}-worker-{i}"
+            if self.verify_vm_exists(name):
+                count += 1
+                i += 1
+            else:
+                break
+        return count
+
+    # --- Volumes ---
+
+    def verify_volume_exists(self, name):
+        """Return volume dict if found, else None."""
+        data = cmk("list", "volumes", f"name={name}", "type=DATADISK",
+                    "filter=id,name,state")
+        if data:
+            for v in data.get("volume", []):
+                if v["name"] == name:
+                    return v
+        return None
+
+    def verify_volume_absent(self, name):
+        return self.verify_volume_exists(name) is None
+
+    def verify_volume_tags(self, name):
+        """Check volume has the locaweb-ai-deploy-id tag."""
+        data = cmk("list", "volumes", f"name={name}", "type=DATADISK",
+                    "tags[0].key=locaweb-ai-deploy-id",
+                    f"tags[0].value={self.network_name}",
+                    "filter=id,name")
+        if data:
+            for v in data.get("volume", []):
+                if v["name"] == name:
+                    return True
+        return False
+
+    def verify_no_tagged_volumes(self):
+        """Ensure no volumes with our tag remain."""
+        data = cmk("list", "volumes", "type=DATADISK",
+                    "tags[0].key=locaweb-ai-deploy-id",
+                    f"tags[0].value={self.network_name}",
+                    "filter=id,name")
+        if data and data.get("volume"):
+            return len(data["volume"]) == 0
+        return True
+
+    # --- Snapshot Policies ---
+
+    def verify_snapshot_policy(self, vol_id):
+        """Check that a snapshot policy exists for the volume."""
+        data = cmk("list", "snapshotpolicies", f"volumeid={vol_id}")
+        if data and data.get("snapshotpolicy"):
+            return len(data["snapshotpolicy"]) > 0
+        return False
+
+    # --- Public IPs ---
+
+    def count_non_sourcenat_ips(self):
+        net_id = self.get_network_id()
+        if not net_id:
+            return 0
+        data = cmk("list", "publicipaddresses",
+                    f"associatednetworkid={net_id}",
+                    "filter=id,ipaddress,issourcenat")
+        count = 0
+        if data:
+            for ip in data.get("publicipaddress", []):
+                if not ip.get("issourcenat", False):
+                    count += 1
+        return count
+
+    def find_ip_for_vm(self, network_id, vm_id):
+        """Find public IP with static NAT pointing to a specific VM."""
+        data = cmk("list", "publicipaddresses",
+                    f"associatednetworkid={network_id}",
+                    "filter=id,ipaddress,issourcenat,isstaticnat,virtualmachineid")
+        if data:
+            for ip in data.get("publicipaddress", []):
+                if ip.get("virtualmachineid") == vm_id:
+                    return ip
+        return None
+
+    # --- Firewall Rules ---
+
+    def verify_firewall_rules(self, ip_id, expected_ports):
+        """Verify exact set of firewall ports on an IP."""
+        data = cmk("list", "firewallrules", f"ipaddressid={ip_id}",
+                    "filter=id,startport,endport")
+        actual_ports = set()
+        if data:
+            for r in data.get("firewallrule", []):
+                actual_ports.add(int(r["startport"]))
+        return actual_ports == set(expected_ports)
+
+    # --- Static NAT ---
+
+    def verify_static_nat(self, ip_id, expected_vm_id):
+        """Verify static NAT points to the expected VM."""
+        data = cmk("list", "publicipaddresses", f"id={ip_id}",
+                    "filter=id,isstaticnat,virtualmachineid")
+        if data and data.get("publicipaddress"):
+            ip = data["publicipaddress"][0]
+            return (ip.get("isstaticnat", False)
+                    and ip.get("virtualmachineid") == expected_vm_id)
+        return False
+
+    # --- SSH Key Pair ---
+
+    def verify_keypair_exists(self):
+        data = cmk("list", "sshkeypairs", f"name={self.keypair_name}")
+        return bool(data and data.get("sshkeypair"))
+
+    def verify_keypair_absent(self):
+        return not self.verify_keypair_exists()
+
+
+# ---------------------------------------------------------------------------
+# Test Scenario (context manager for assertion tracking)
+# ---------------------------------------------------------------------------
+
+class TestScenario:
+    """Tracks assertions and duration for a single test scenario."""
+
+    def __init__(self, name):
+        self.name = name
+        self.assertions = []
+        self.status = "PASS"
+        self.start_time = None
+        self.duration = 0
+
+    def __enter__(self):
+        self.start_time = time.time()
+        print(f"\n{'=' * 60}")
+        print(f"SCENARIO: {self.name}")
+        print(f"{'=' * 60}")
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.duration = time.time() - self.start_time
+        if exc_type:
+            self.status = "FAIL"
+            self.assertions.append({
+                "message": f"Exception: {exc_val}",
+                "passed": False,
+            })
+            print(f"  [FAIL] Exception: {exc_val}")
+            traceback.print_exception(exc_type, exc_val, exc_tb)
+        passed = sum(1 for a in self.assertions if a["passed"])
+        failed = sum(1 for a in self.assertions if not a["passed"])
+        print(f"\n  Result: [{self.status}] {passed} passed, {failed} failed ({self.duration:.0f}s)")
+        return True  # suppress exceptions so suite continues
+
+    def assert_true(self, condition, message):
+        passed = bool(condition)
+        self.assertions.append({"message": message, "passed": passed})
+        tag = "PASS" if passed else "FAIL"
+        print(f"  [{tag}] {message}")
+        if not passed:
+            self.status = "FAIL"
+        return passed
+
+    def assert_equal(self, actual, expected, message):
+        passed = actual == expected
+        full_msg = f"{message} (expected={expected}, actual={actual})"
+        self.assertions.append({"message": full_msg, "passed": passed})
+        tag = "PASS" if passed else "FAIL"
+        print(f"  [{tag}] {full_msg}")
+        if not passed:
+            self.status = "FAIL"
+        return passed
+
+
+# ---------------------------------------------------------------------------
+# Test Runner
+# ---------------------------------------------------------------------------
+
+class TestRunner:
+    """Orchestrates all test scenarios."""
+
+    def __init__(self):
+        self.scenarios = []
+        self.verifier = InfrastructureVerifier(NETWORK_NAME)
+        self.ssh = SSHVerifier()
+        self.last_output = None
+
+    # --- Helpers ---
+
+    def provision(self, config):
+        """Write config to /tmp and call provision_infrastructure.py."""
+        config_path = "/tmp/test-config.json"
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+        print(f"\n  Provisioning with config:")
+        for k, v in config.items():
+            print(f"    {k}: {v}")
+        result = subprocess.run(
+            ["python3", "-u", PROVISION_SCRIPT,
+             "--repo-name", REPO_NAME,
+             "--unique-id", UNIQUE_ID,
+             "--config", config_path,
+             "--public-key", PUBLIC_KEY_PATH,
+             "--output", PROVISION_OUTPUT],
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Provisioning failed with exit code {result.returncode}")
+        with open(PROVISION_OUTPUT) as f:
+            self.last_output = json.load(f)
+        return self.last_output
+
+    def teardown(self):
+        """Call teardown_infrastructure.py."""
+        print(f"\n  Tearing down: {NETWORK_NAME}")
+        result = subprocess.run(
+            ["python3", "-u", TEARDOWN_SCRIPT,
+             "--network-name", NETWORK_NAME],
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Teardown failed with exit code {result.returncode}")
+
+    def save_results(self):
+        """Write test results JSON to /tmp/test-results.json."""
+        total_pass = sum(
+            sum(1 for a in s.assertions if a["passed"])
+            for s in self.scenarios
+        )
+        total_fail = sum(
+            sum(1 for a in s.assertions if not a["passed"])
+            for s in self.scenarios
+        )
+        total_duration = sum(s.duration for s in self.scenarios)
+        results = {
+            "scenarios": [
+                {
+                    "name": s.name,
+                    "status": s.status,
+                    "duration": s.duration,
+                    "assertions": s.assertions,
+                }
+                for s in self.scenarios
+            ],
+            "total_pass": total_pass,
+            "total_fail": total_fail,
+            "total_duration": total_duration,
+        }
+        with open(RESULTS_PATH, "w") as f:
+            json.dump(results, f, indent=2)
+        print(f"\nResults written to {RESULTS_PATH}")
+        return total_fail == 0
+
+    # --- Scenario runner ---
+
+    def run_all(self):
+        """Run all test phases in order."""
+        self._phase0_initial_teardown()
+
+        self._phase1_complete_deploy()
+        self._phase1_scale_down()
+        self._phase1_teardown()
+
+        self._phase2_implicit_deploy()
+        self._phase2_teardown()
+
+        self._phase3_implicit_features()
+        self._phase3_scale_up()
+        self._phase3_scale_down()
+        self._phase3_teardown()
+
+        self._phase4_explicit_disablements()
+        self._phase4_teardown()
+
+        return self.save_results()
+
+    # ------------------------------------------------------------------
+    # Phase 0: Clean slate
+    # ------------------------------------------------------------------
+
+    def _phase0_initial_teardown(self):
+        s = TestScenario("Phase 0: Initial Teardown")
+        with s:
+            self.teardown()
+            s.assert_true(
+                self.verifier.verify_network_absent(),
+                "Network absent after initial teardown")
+        self.scenarios.append(s)
+
+    # ------------------------------------------------------------------
+    # Phase 1: Complete deploy chain
+    # ------------------------------------------------------------------
+
+    def _phase1_complete_deploy(self):
+        s = TestScenario("1. Complete Deploy")
+        with s:
+            output = self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 30,
+                "workers_enabled": True,
+                "workers_replicas": 3,
+                "workers_plan": "small",
+                "db_enabled": True,
+                "db_plan": "medium",
+                "db_disk_size_gb": 25,
+            })
+
+            # --- Network & keypair ---
+            s.assert_true(self.verifier.verify_network_exists(),
+                          "Network exists")
+            s.assert_true(self.verifier.verify_keypair_exists(),
+                          "SSH keypair exists")
+
+            # --- Web VM ---
+            web = self.verifier.verify_vm_exists(f"{NETWORK_NAME}-web")
+            s.assert_true(web is not None, "Web VM exists")
+            if web:
+                s.assert_equal(web.get("state"), "Running",
+                               "Web VM is Running")
+
+            # --- Workers 1-3 ---
+            for i in range(1, 4):
+                name = f"{NETWORK_NAME}-worker-{i}"
+                vm = self.verifier.verify_vm_exists(name)
+                s.assert_true(vm is not None, f"Worker-{i} VM exists")
+                if vm:
+                    s.assert_equal(vm.get("state"), "Running",
+                                   f"Worker-{i} VM is Running")
+            s.assert_equal(self.verifier.count_worker_vms(), 3,
+                           "Worker count is 3")
+
+            # --- DB VM ---
+            db = self.verifier.verify_vm_exists(f"{NETWORK_NAME}-db")
+            s.assert_true(db is not None, "DB VM exists")
+            if db:
+                s.assert_equal(db.get("state"), "Running",
+                               "DB VM is Running")
+
+            # --- Volumes ---
+            blob_name = f"{NETWORK_NAME}-blob"
+            s.assert_true(
+                self.verifier.verify_volume_exists(blob_name) is not None,
+                "Blob volume exists")
+            s.assert_true(
+                self.verifier.verify_volume_tags(blob_name),
+                "Blob volume has correct tag")
+
+            db_vol_name = f"{NETWORK_NAME}-dbdata"
+            s.assert_true(
+                self.verifier.verify_volume_exists(db_vol_name) is not None,
+                "DB volume exists")
+            s.assert_true(
+                self.verifier.verify_volume_tags(db_vol_name),
+                "DB volume has correct tag")
+
+            # --- Snapshot policies ---
+            s.assert_true(
+                self.verifier.verify_snapshot_policy(output["blob_volume_id"]),
+                "Blob snapshot policy exists")
+            s.assert_true(
+                self.verifier.verify_snapshot_policy(output["db_volume_id"]),
+                "DB snapshot policy exists")
+
+            # --- Public IPs ---
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 5,
+                           "5 non-source-NAT public IPs")
+
+            # --- Firewall rules ---
+            s.assert_true(
+                self.verifier.verify_firewall_rules(
+                    output["web_ip_id"], [22, 80, 443]),
+                "Web firewall: ports 22, 80, 443")
+            s.assert_true(
+                self.verifier.verify_firewall_rules(
+                    output["db_ip_id"], [22]),
+                "DB firewall: port 22")
+
+            net_id = output["network_id"]
+            for i, wvm_id in enumerate(output.get("worker_vm_ids", []), 1):
+                wip = self.verifier.find_ip_for_vm(net_id, wvm_id)
+                if wip:
+                    s.assert_true(
+                        self.verifier.verify_firewall_rules(wip["id"], [22]),
+                        f"Worker-{i} firewall: port 22")
+                else:
+                    s.assert_true(False, f"Worker-{i} public IP found")
+
+            # --- Static NAT ---
+            s.assert_true(
+                self.verifier.verify_static_nat(
+                    output["web_ip_id"], output["web_vm_id"]),
+                "Web IP static NAT -> web VM")
+            s.assert_true(
+                self.verifier.verify_static_nat(
+                    output["db_ip_id"], output["db_vm_id"]),
+                "DB IP static NAT -> DB VM")
+
+            # --- SSH verification ---
+            web_ip = output["web_ip"]
+            s.assert_true(
+                self.ssh.wait_for_ssh(web_ip, timeout=180),
+                "SSH to web VM: reachable")
+            s.assert_true(
+                self.ssh.verify_mount_point(web_ip, "/data/blobs", timeout=120),
+                "SSH to web VM: /data/blobs mounted")
+
+            db_ip = output["db_ip"]
+            s.assert_true(
+                self.ssh.wait_for_ssh(db_ip, timeout=180),
+                "SSH to DB VM: reachable")
+            s.assert_true(
+                self.ssh.verify_mount_point(db_ip, "/data/db", timeout=120),
+                "SSH to DB VM: /data/db mounted")
+
+            for i, wip_addr in enumerate(output.get("worker_ips", []), 1):
+                s.assert_true(
+                    self.ssh.wait_for_ssh(wip_addr, timeout=180),
+                    f"SSH to Worker-{i} VM: reachable")
+
+            # --- Output JSON fields ---
+            s.assert_true("web_vm_id" in output, "Output has web_vm_id")
+            s.assert_true("web_ip" in output, "Output has web_ip")
+            s.assert_true("blob_volume_id" in output,
+                          "Output has blob_volume_id")
+            s.assert_equal(len(output.get("worker_vm_ids", [])), 3,
+                           "Output has 3 worker_vm_ids")
+            s.assert_true("db_vm_id" in output, "Output has db_vm_id")
+            s.assert_true("db_volume_id" in output,
+                          "Output has db_volume_id")
+            s.assert_true("db_ip" in output, "Output has db_ip")
+
+        self.scenarios.append(s)
+
+    def _phase1_scale_down(self):
+        s = TestScenario("2. Scale Down Workers 3->1")
+        with s:
+            self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 30,
+                "workers_enabled": True,
+                "workers_replicas": 1,
+                "workers_plan": "small",
+                "db_enabled": True,
+                "db_plan": "medium",
+                "db_disk_size_gb": 25,
+            })
+
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-worker-1") is not None,
+                "Worker-1 still exists")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-2"),
+                "Worker-2 gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-3"),
+                "Worker-3 gone")
+            s.assert_equal(self.verifier.count_worker_vms(), 1,
+                           "Worker count is 1")
+
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-web") is not None,
+                "Web VM unaffected")
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-db") is not None,
+                "DB VM unaffected")
+
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 3,
+                           "3 public IPs remain")
+
+        self.scenarios.append(s)
+
+    def _phase1_teardown(self):
+        s = TestScenario("3. Teardown Verify")
+        with s:
+            self.teardown()
+
+            s.assert_true(self.verifier.verify_network_absent(),
+                          "Network gone")
+            s.assert_true(self.verifier.verify_keypair_absent(),
+                          "Keypair gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-web"),
+                "Web VM gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-db"),
+                "DB VM gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-1"),
+                "Worker-1 VM gone")
+            s.assert_true(
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-blob"),
+                "Blob volume gone")
+            s.assert_true(
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
+                "DB volume gone")
+            s.assert_true(self.verifier.verify_no_tagged_volumes(),
+                          "No tagged volumes remain")
+
+        self.scenarios.append(s)
+
+    # ------------------------------------------------------------------
+    # Phase 2: Implicit deploy (defaults — web only)
+    # ------------------------------------------------------------------
+
+    def _phase2_implicit_deploy(self):
+        s = TestScenario("4. Implicit Deploy (defaults)")
+        with s:
+            output = self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 20,
+                "workers_enabled": False,
+                "workers_replicas": 1,
+                "workers_plan": "small",
+                "db_enabled": False,
+                "db_plan": "medium",
+                "db_disk_size_gb": 20,
+            })
+
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-web") is not None,
+                "Web VM exists")
+            s.assert_equal(self.verifier.count_worker_vms(), 0,
+                           "Zero workers")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-db"),
+                "No DB VM")
+
+            s.assert_true(
+                self.verifier.verify_volume_exists(
+                    f"{NETWORK_NAME}-blob") is not None,
+                "Blob volume exists")
+            s.assert_true(
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
+                "No DB volume")
+
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 1,
+                           "1 public IP")
+
+            # SSH
+            web_ip = output["web_ip"]
+            s.assert_true(
+                self.ssh.wait_for_ssh(web_ip, timeout=180),
+                "SSH to web: reachable")
+            s.assert_true(
+                self.ssh.verify_mount_point(web_ip, "/data/blobs", timeout=120),
+                "SSH to web: /data/blobs mounted")
+
+            # Output JSON
+            s.assert_true("worker_vm_ids" not in output,
+                          "Output has no worker_vm_ids")
+            s.assert_true("db_vm_id" not in output,
+                          "Output has no db_vm_id")
+            s.assert_true("db_volume_id" not in output,
+                          "Output has no db_volume_id")
+
+        self.scenarios.append(s)
+
+    def _phase2_teardown(self):
+        s = TestScenario("5. Teardown Verify")
+        with s:
+            self.teardown()
+
+            s.assert_true(self.verifier.verify_network_absent(),
+                          "Network gone")
+            s.assert_true(self.verifier.verify_keypair_absent(),
+                          "Keypair gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-web"),
+                "Web VM gone")
+            s.assert_true(
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-blob"),
+                "Blob volume gone")
+            s.assert_true(self.verifier.verify_no_tagged_volumes(),
+                          "No tagged volumes remain")
+
+        self.scenarios.append(s)
+
+    # ------------------------------------------------------------------
+    # Phase 3: Implicit with features (workers + db, default values)
+    # ------------------------------------------------------------------
+
+    def _phase3_implicit_features(self):
+        s = TestScenario("6. Implicit with Workers+DB")
+        with s:
+            self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 20,
+                "workers_enabled": True,
+                "workers_replicas": 1,
+                "workers_plan": "small",
+                "db_enabled": True,
+                "db_plan": "medium",
+                "db_disk_size_gb": 20,
+            })
+
+            s.assert_equal(self.verifier.count_worker_vms(), 1,
+                           "1 worker (default replicas)")
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-db") is not None,
+                "DB VM exists")
+            s.assert_true(
+                self.verifier.verify_volume_exists(
+                    f"{NETWORK_NAME}-dbdata") is not None,
+                "DB volume exists")
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 3,
+                           "3 public IPs")
+
+        self.scenarios.append(s)
+
+    def _phase3_scale_up(self):
+        s = TestScenario("7. Scale Up Workers 1->3")
+        with s:
+            self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 20,
+                "workers_enabled": True,
+                "workers_replicas": 3,
+                "workers_plan": "small",
+                "db_enabled": True,
+                "db_plan": "medium",
+                "db_disk_size_gb": 20,
+            })
+
+            for i in range(1, 4):
+                s.assert_true(
+                    self.verifier.verify_vm_exists(
+                        f"{NETWORK_NAME}-worker-{i}") is not None,
+                    f"Worker-{i} exists")
+            s.assert_equal(self.verifier.count_worker_vms(), 3,
+                           "Worker count is 3")
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 5,
+                           "5 public IPs")
+
+        self.scenarios.append(s)
+
+    def _phase3_scale_down(self):
+        s = TestScenario("8. Scale Down Workers 3->1")
+        with s:
+            self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 20,
+                "workers_enabled": True,
+                "workers_replicas": 1,
+                "workers_plan": "small",
+                "db_enabled": True,
+                "db_plan": "medium",
+                "db_disk_size_gb": 20,
+            })
+
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-worker-1") is not None,
+                "Worker-1 remains")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-2"),
+                "Worker-2 gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-3"),
+                "Worker-3 gone")
+
+        self.scenarios.append(s)
+
+    def _phase3_teardown(self):
+        s = TestScenario("9. Teardown Verify")
+        with s:
+            self.teardown()
+
+            s.assert_true(self.verifier.verify_network_absent(),
+                          "Network gone")
+            s.assert_true(self.verifier.verify_keypair_absent(),
+                          "Keypair gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-web"),
+                "Web VM gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-db"),
+                "DB VM gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-worker-1"),
+                "Worker-1 VM gone")
+            s.assert_true(self.verifier.verify_no_tagged_volumes(),
+                          "No tagged volumes remain")
+
+        self.scenarios.append(s)
+
+    # ------------------------------------------------------------------
+    # Phase 4: Explicit disablements
+    # ------------------------------------------------------------------
+
+    def _phase4_explicit_disablements(self):
+        s = TestScenario("10. Explicit Disablements")
+        with s:
+            output = self.provision({
+                "zone": ZONE,
+                "domain": "",
+                "web_plan": "small",
+                "blob_disk_size_gb": 20,
+                "workers_enabled": False,
+                "workers_replicas": 5,
+                "workers_plan": "large",
+                "db_enabled": False,
+                "db_plan": "xlarge",
+                "db_disk_size_gb": 100,
+            })
+
+            s.assert_true(
+                self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-web") is not None,
+                "Web VM exists")
+            s.assert_equal(self.verifier.count_worker_vms(), 0,
+                           "Zero workers (disabled despite replicas=5)")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-db"),
+                "No DB VM (disabled despite plan/disk set)")
+            s.assert_true(
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
+                "No DB volume")
+
+            s.assert_equal(self.verifier.count_non_sourcenat_ips(), 1,
+                           "1 public IP")
+
+            s.assert_true("worker_vm_ids" not in output,
+                          "Output has no worker_vm_ids")
+            s.assert_true("db_vm_id" not in output,
+                          "Output has no db_vm_id")
+
+        self.scenarios.append(s)
+
+    def _phase4_teardown(self):
+        s = TestScenario("11. Final Teardown Verify")
+        with s:
+            self.teardown()
+
+            s.assert_true(self.verifier.verify_network_absent(),
+                          "Network gone")
+            s.assert_true(self.verifier.verify_keypair_absent(),
+                          "Keypair gone")
+            s.assert_true(
+                self.verifier.verify_vm_absent(f"{NETWORK_NAME}-web"),
+                "Web VM gone")
+            s.assert_true(self.verifier.verify_no_tagged_volumes(),
+                          "No tagged volumes remain")
+
+        self.scenarios.append(s)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def main():
+    print(f"{'#' * 60}")
+    print(f"# Infrastructure Test Suite")
+    print(f"# Network: {NETWORK_NAME}")
+    print(f"# Zone:    {ZONE}")
+    print(f"{'#' * 60}")
+
+    runner = TestRunner()
+    all_passed = runner.run_all()
+
+    total_pass = sum(
+        sum(1 for a in s.assertions if a["passed"])
+        for s in runner.scenarios
+    )
+    total_fail = sum(
+        sum(1 for a in s.assertions if not a["passed"])
+        for s in runner.scenarios
+    )
+
+    print(f"\n{'#' * 60}")
+    print(f"# FINAL: {total_pass} passed, {total_fail} failed")
+    print(f"{'#' * 60}")
+
+    sys.exit(0 if all_passed else 1)
+
+
+if __name__ == "__main__":
+    main()

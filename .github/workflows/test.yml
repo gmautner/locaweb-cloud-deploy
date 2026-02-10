@@ -1,0 +1,117 @@
+# End-to-End Infrastructure Test Workflow
+#
+# Validates all deployment scenarios: complete deploys, defaults,
+# scale up/down, explicit disablements, and teardown.
+#
+# Uses github.run_id as unique-id to isolate test resources from
+# production deployments (which use github.repository_id).
+#
+# Required GitHub Secrets:
+#   CLOUDSTACK_API_KEY    - CloudStack API key
+#   CLOUDSTACK_SECRET_KEY - CloudStack secret key
+#   SSH_PRIVATE_KEY       - SSH private key
+
+name: Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: "CloudStack zone"
+        type: choice
+        default: "ZP01"
+        options:
+          - ZP01
+          - ZP02
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract SSH public key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/ssh_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          ssh-keygen -y -f /tmp/ssh_key > /tmp/ssh_key.pub
+          echo "Public key extracted successfully."
+
+      - name: Install and configure CloudMonkey
+        env:
+          CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
+          CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
+        run: |
+          wget -q https://github.com/apache/cloudstack-cloudmonkey/releases/latest/download/cmk.linux.x86-64
+          chmod +x cmk.linux.x86-64
+          sudo mv cmk.linux.x86-64 /usr/local/bin/cmk
+          cmk set url "https://painel-cloud.locaweb.com.br/client/api"
+          cmk set apikey "$CLOUDSTACK_API_KEY"
+          cmk set secretkey "$CLOUDSTACK_SECRET_KEY"
+          cmk set output json
+          cmk sync
+          echo "Verifying CloudStack connectivity..."
+          cmk list zones filter=name
+          echo "CloudMonkey configured successfully."
+
+      - name: Run test suite
+        env:
+          REPO_NAME: ${{ github.event.repository.name }}
+          UNIQUE_ID: ${{ github.run_id }}
+          ZONE: ${{ inputs.zone || 'ZP01' }}
+        run: |
+          python3 -u scripts/test_infrastructure.py
+
+      - name: Emergency teardown
+        if: always()
+        run: |
+          NETWORK_NAME="${{ github.event.repository.name }}-${{ github.run_id }}"
+          echo "Emergency teardown for: $NETWORK_NAME"
+          python3 -u scripts/teardown_infrastructure.py \
+            --network-name "$NETWORK_NAME" || true
+
+      - name: Test summary
+        if: always()
+        run: |
+          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+          import json, os
+          results_path = "/tmp/test-results.json"
+          if not os.path.exists(results_path):
+              print("## Test Results")
+              print("")
+              print("No test results found — the test suite may have crashed before producing output.")
+              exit(0)
+          with open(results_path) as f:
+              results = json.load(f)
+          total_pass = results["total_pass"]
+          total_fail = results["total_fail"]
+          status = "ALL PASSED" if total_fail == 0 else "FAILURES DETECTED"
+          print(f"## Test Results — {status}")
+          print("")
+          print(f"**{total_pass}** passed, **{total_fail}** failed, **{total_pass + total_fail}** total")
+          print(f"**Duration:** {results['total_duration']:.0f}s")
+          print("")
+          print("| # | Scenario | Status | Duration | Pass | Fail |")
+          print("|---|----------|--------|----------|------|------|")
+          for i, s in enumerate(results["scenarios"], 1):
+              icon = "PASS" if s["status"] == "PASS" else "FAIL"
+              passed = sum(1 for a in s["assertions"] if a["passed"])
+              failed = sum(1 for a in s["assertions"] if not a["passed"])
+              print(f"| {i} | {s['name']} | {icon} | {s['duration']:.0f}s | {passed} | {failed} |")
+          if total_fail > 0:
+              print("")
+              print("### Failed Assertions")
+              print("")
+              for s in results["scenarios"]:
+                  failures = [a for a in s["assertions"] if not a["passed"]]
+                  if failures:
+                      print(f"**{s['name']}:**")
+                      for a in failures:
+                          print(f"- {a['message']}")
+                      print("")
+          PYEOF
