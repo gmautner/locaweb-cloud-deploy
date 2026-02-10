@@ -152,7 +152,7 @@ jobs:
 
       - name: Provision infrastructure
         run: |
-          python3 scripts/provision_infrastructure.py \
+          python3 -u scripts/provision_infrastructure.py \
             --repo-name "${{ github.event.repository.name }}" \
             --unique-id "${{ github.repository_id }}" \
             --config /tmp/config.json \

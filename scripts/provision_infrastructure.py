@@ -283,6 +283,7 @@ def create_snapshot_policy(vol_id, network_name, desc):
             f"schedule={SNAPSHOT_SCHEDULE}",
             f"maxsnaps={SNAPSHOT_MAX}",
             f"timezone={SNAPSHOT_TIMEZONE}",
+            "zoneids=ZP01,ZP02",
             "tags[0].key=locaweb-ai-deploy-id",
             f"tags[0].value={network_name}")
         print(f"  {desc}: daily snapshot policy created")

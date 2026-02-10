@@ -38,7 +38,7 @@ jobs:
 
       - name: Teardown infrastructure
         run: |
-          python3 scripts/teardown_infrastructure.py \
+          python3 -u scripts/teardown_infrastructure.py \
             --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}"
 
       - name: Print summary
