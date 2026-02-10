@@ -540,6 +540,8 @@ def main():
                         help="Path to validated JSON config file")
     parser.add_argument("--public-key", required=True,
                         help="Path to SSH public key file")
+    parser.add_argument("--output", default=None,
+                        help="Path to write JSON output (default: stdout)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -551,8 +553,13 @@ def main():
     try:
         results = provision(config, repo_name=args.repo_name,
                             unique_id=args.unique_id, public_key=public_key)
-        json.dump(results, sys.stdout, indent=2)
-        print()
+        if args.output:
+            with open(args.output, "w") as f:
+                json.dump(results, f, indent=2)
+            print(f"\nOutput written to {args.output}")
+        else:
+            json.dump(results, sys.stdout, indent=2)
+            print()
     except RuntimeError as e:
         print(f"\nFATAL: {e}", file=sys.stderr)
         sys.exit(1)

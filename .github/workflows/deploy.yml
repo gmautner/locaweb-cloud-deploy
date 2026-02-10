@@ -157,7 +157,7 @@ jobs:
             --unique-id "${{ github.repository_id }}" \
             --config /tmp/config.json \
             --public-key /tmp/ssh_key.pub \
-            | tee /tmp/provision-output.json
+            --output /tmp/provision-output.json
 
       - name: Set outputs
         id: outputs
