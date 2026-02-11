@@ -36,6 +36,11 @@ TEMPLATE = """<!DOCTYPE html>
   <li>{{ note[1] }} <small>({{ note[2] }})</small></li>
 {% endfor %}
 </ul>
+<h2>Custom Environment Variables</h2>
+<ul>
+  <li><strong>MY_VAR:</strong> {{ my_var or '<em>not set</em>' }}</li>
+  <li><strong>MY_SECRET:</strong> {{ my_secret or '<em>not set</em>' }}</li>
+</ul>
 <h2>File Upload (Blob Storage)</h2>
 <form method="POST" action="/upload" enctype="multipart/form-data">
   <input type="file" name="file" required>
@@ -96,7 +101,11 @@ def index():
     if os.path.isdir(BLOB_PATH):
         files = sorted(f for f in os.listdir(BLOB_PATH) if f != "lost+found")
 
-    return render_template_string(TEMPLATE, notes=notes, files=files)
+    my_var = os.environ.get("MY_VAR", "")
+    my_secret = os.environ.get("MY_SECRET", "")
+
+    return render_template_string(TEMPLATE, notes=notes, files=files,
+                                  my_var=my_var, my_secret=my_secret)
 
 
 @app.route("/notes", methods=["POST"])
