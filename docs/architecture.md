@@ -53,8 +53,8 @@ The system is composed of five logical layers:
 ```
 +---------------------------------------------------------------+
 |                      GitHub Actions                           |
-|  (Orchestration: deploy.yml, teardown.yml, test.yml,          |
-|   e2e-test.yml)                                               |
+|  (Orchestration: deploy.yml, teardown.yml, test-infrastructure.yml,          |
+|   e2e-test-infrastructure.yml)                                               |
 +---------------------------------------------------------------+
         |                    |                    |
         v                    v                    v
@@ -160,7 +160,7 @@ Destroys all CloudStack resources in reverse creation order. Uses the same Cloud
 
 The teardown script treats all `cmk` failures as non-fatal warnings because resources may already be partially deleted.
 
-#### test.yml
+#### test-infrastructure.yml
 
 An infrastructure-focused integration test workflow that validates CloudStack provisioning across multiple scenarios. Uses `github.run_id` as the unique identifier to isolate test resources from production. This workflow tests resource creation, idempotency, and teardown but does **not** run Kamal or deploy the application.
 
@@ -180,9 +180,9 @@ An infrastructure-focused integration test workflow that validates CloudStack pr
 
 The test workflow generates a fresh ed25519 SSH key pair per run to avoid CloudStack's unique-public-key-per-account constraint. An **emergency teardown** step runs unconditionally (`if: always()`) to ensure test resources are cleaned up even if the test suite crashes. Results are saved to `/tmp/test-results.json` and rendered as a Markdown table in the step summary.
 
-#### e2e-test.yml
+#### e2e-test-infrastructure.yml
 
-An application-focused E2E test workflow that triggers the **real** `deploy.yml` workflow, waits for it to complete, then verifies the deployed application works correctly. Unlike `test.yml` which validates CloudStack resources, this workflow validates the full deployment pipeline including Kamal, container deployment, and application behavior.
+An application-focused E2E test workflow that triggers the **real** `deploy.yml` workflow, waits for it to complete, then verifies the deployed application works correctly. Unlike `test-infrastructure.yml` which validates CloudStack resources, this workflow validates the full deployment pipeline including Kamal, container deployment, and application behavior.
 
 **Concurrency:** Uses its own concurrency group (`e2e-test-${{ github.repository }}`), separate from the `deploy-${{ github.repository }}` group shared by `deploy.yml` and `teardown.yml`. This prevents deadlocks: the E2E workflow triggers deploy/teardown via `gh workflow run`, and if they shared a group, the triggered workflow would queue behind the E2E run that's waiting for it.
 
@@ -509,7 +509,7 @@ HTTP Request -> Public IP -> Static NAT -> Web VM:80
 ### E2E test data flow
 
 ```
-1. User triggers e2e-test.yml (workflow_dispatch)
+1. User triggers e2e-test-infrastructure.yml (workflow_dispatch)
    |
    v
 2. Initial teardown (direct script call)
@@ -630,7 +630,7 @@ This enables safe re-execution after partial failures and supports incremental t
 
 Two complementary test suites validate the system at different levels:
 
-**Infrastructure tests** (`test.yml` / `test_infrastructure.py`) validate:
+**Infrastructure tests** (`test-infrastructure.yml` / `test_infrastructure.py`) validate:
 
 - Resource creation and absence for all resource types.
 - Scale-up from 1 to 3 workers and scale-down from 3 to 1.
@@ -641,7 +641,7 @@ Two complementary test suites validate the system at different levels:
 - Complete teardown verification (no orphaned resources).
 - Emergency cleanup on test failure.
 
-**E2E application tests** (`e2e-test.yml` / `e2e_test.py`) validate:
+**E2E application tests** (`e2e-test-infrastructure.yml` / `e2e_test.py`) validate:
 
 - Full deploy pipeline (provision + Kamal + container start).
 - HTTP health check (`/up` returns 200).

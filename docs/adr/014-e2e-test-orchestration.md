@@ -6,7 +6,7 @@ Accepted
 
 ## Context
 
-The project had an infrastructure test suite (`test.yml` / `test_infrastructure.py`) that validates CloudStack resource provisioning, but it never ran Kamal, never deployed the application, and never verified that the deployed application actually works. There was no validation that the full pipeline -- from `workflow_dispatch` through provisioning, Docker build, Kamal deploy, and container startup -- produces a working application.
+The project had an infrastructure test suite (`test-infrastructure.yml` / `test_infrastructure.py`) that validates CloudStack resource provisioning, but it never ran Kamal, never deployed the application, and never verified that the deployed application actually works. There was no validation that the full pipeline -- from `workflow_dispatch` through provisioning, Docker build, Kamal deploy, and container startup -- produces a working application.
 
 Additionally, the sample Flask app crashed without a database connection, preventing web-only deployments from passing health checks.
 

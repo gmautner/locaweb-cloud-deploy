@@ -47,4 +47,4 @@ Use the sample FastAPI app in the root of the repo as the test application.
 
 ### Testing
 
-Reserve the **test** workflow (`test.yml`) for after bigger or more impactful changes, as it takes a long time to complete.
+Reserve the **infrastructure test** workflow (`test-infrastructure.yml`) for after bigger or more impactful changes, as it takes a long time to complete.

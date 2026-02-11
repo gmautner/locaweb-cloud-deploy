@@ -100,7 +100,7 @@ Users of the workflow (whether human or agent) should not need to interact direc
 
 | ID | Requirement |
 |----|-------------|
-| FR-25 | An infrastructure test workflow (`test.yml`) shall validate all provisioning scenarios (resource creation, scale-up/down, teardown) using CloudStack API verification and SSH connectivity checks. |
+| FR-25 | An infrastructure test workflow (`test-infrastructure.yml`) shall validate all provisioning scenarios (resource creation, scale-up/down, teardown) using CloudStack API verification and SSH connectivity checks. |
 | FR-33 | An E2E test workflow (`e2e-test.yml`) shall trigger the real `deploy.yml` workflow, wait for completion, and verify application behavior: HTTP health checks, page content, database operations, file uploads, SSH mount points, disk sizes, and container environment variables. |
 | FR-34 | The E2E test workflow shall support selectable scenarios: `complete` (full stack), `web-only`, `scale-up`, `scale-down`, and `all`. |
 | FR-35 | The E2E test workflow shall use a separate concurrency group from deploy/teardown to prevent deadlocks when triggering workflows. |
@@ -265,7 +265,7 @@ locaweb-ai-deploy/
 |   `-- workflows/
 |       |-- deploy.yml                  Provision + deploy workflow
 |       |-- teardown.yml                Destroy all resources workflow
-|       |-- test.yml                    Infrastructure validation tests
+|       |-- test-infrastructure.yml     Infrastructure validation tests
 |       `-- e2e-test.yml               E2E application test workflow
 |-- scripts/
 |   |-- provision_infrastructure.py     CloudStack provisioning (idempotent)
