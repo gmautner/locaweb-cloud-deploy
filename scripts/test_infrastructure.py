@@ -267,6 +267,30 @@ class InfrastructureVerifier:
                     and ip.get("virtualmachineid") == expected_vm_id)
         return False
 
+    # --- VM Offering ---
+
+    def verify_vm_offering(self, name, expected_offering_id):
+        """Check that a VM's service offering matches expected."""
+        data = cmk("list", "virtualmachines", f"name={name}",
+                    "filter=id,name,serviceofferingid")
+        if data:
+            for vm in data.get("virtualmachine", []):
+                if vm["name"] == name:
+                    return vm.get("serviceofferingid") == expected_offering_id
+        return False
+
+    # --- Volume Size ---
+
+    def get_volume_size_gb(self, name):
+        """Return volume size in GB via cmk, or None if not found."""
+        data = cmk("list", "volumes", f"name={name}", "type=DATADISK",
+                    "filter=id,name,size")
+        if data:
+            for v in data.get("volume", []):
+                if v["name"] == name:
+                    return v.get("size", 0) // (1024 ** 3)
+        return None
+
     # --- SSH Key Pair ---
 
     def verify_keypair_exists(self):
@@ -347,6 +371,15 @@ class TestRunner:
         self.last_output = None
 
     # --- Helpers ---
+
+    def resolve_offering_id(self, name):
+        """Resolve a service offering name to its ID via cmk."""
+        data = cmk("list", "serviceofferings", "filter=id,name")
+        if data:
+            for so in data.get("serviceoffering", []):
+                if so["name"] == name:
+                    return so["id"]
+        return None
 
     def provision(self, config):
         """Write config to /tmp and call provision_infrastructure.py."""
@@ -749,7 +782,7 @@ class TestRunner:
     # ------------------------------------------------------------------
 
     def _phase3_deploy_with_features(self):
-        s = TestScenario("6. Deploy with Workers+DB")
+        s = TestScenario("6. Deploy with Workers+DB (small plans)")
         with s:
             self.provision({
                 "zone": ZONE,
@@ -760,7 +793,7 @@ class TestRunner:
                 "workers_replicas": 1,
                 "workers_plan": "small",
                 "db_enabled": True,
-                "db_plan": "medium",
+                "db_plan": "small",
                 "db_disk_size_gb": 20,
             })
 
@@ -777,33 +810,95 @@ class TestRunner:
             s.assert_equal(self.verifier.count_non_sourcenat_ips(), 3,
                            "3 public IPs")
 
+            # Verify initial offerings
+            small_id = self.resolve_offering_id("small")
+            s.assert_true(small_id is not None,
+                          "Resolved 'small' offering ID")
+            if small_id:
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-web", small_id),
+                    "Web VM has 'small' offering")
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-worker-1", small_id),
+                    "Worker-1 has 'small' offering")
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-db", small_id),
+                    "DB VM has 'small' offering")
+
+            # Verify initial disk sizes
+            s.assert_equal(
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-blob"),
+                20, "Blob volume is 20GB")
+            s.assert_equal(
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-dbdata"),
+                20, "DB volume is 20GB")
+
         self.scenarios.append(s)
 
     def _phase3_scale_up(self):
-        s = TestScenario("7. Scale Up Workers 1->3")
+        s = TestScenario("7. Scale Up Workers 1->3 + Offerings & Disks")
         with s:
             self.provision({
                 "zone": ZONE,
                 "domain": "",
-                "web_plan": "small",
-                "blob_disk_size_gb": 20,
+                "web_plan": "medium",
+                "blob_disk_size_gb": 30,
                 "workers_enabled": True,
                 "workers_replicas": 3,
-                "workers_plan": "small",
+                "workers_plan": "medium",
                 "db_enabled": True,
                 "db_plan": "medium",
-                "db_disk_size_gb": 20,
+                "db_disk_size_gb": 25,
             })
 
             for i in range(1, 4):
-                s.assert_true(
-                    self.verifier.verify_vm_exists(
-                        f"{NETWORK_NAME}-worker-{i}") is not None,
-                    f"Worker-{i} exists")
+                vm = self.verifier.verify_vm_exists(
+                    f"{NETWORK_NAME}-worker-{i}")
+                s.assert_true(vm is not None, f"Worker-{i} exists")
+                if vm:
+                    s.assert_equal(vm.get("state"), "Running",
+                                   f"Worker-{i} is Running")
             s.assert_equal(self.verifier.count_worker_vms(), 3,
                            "Worker count is 3")
             s.assert_equal(self.verifier.count_non_sourcenat_ips(), 5,
                            "5 public IPs")
+
+            # Verify offerings changed to medium
+            medium_id = self.resolve_offering_id("medium")
+            s.assert_true(medium_id is not None,
+                          "Resolved 'medium' offering ID")
+            if medium_id:
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-web", medium_id),
+                    "Web VM scaled to 'medium' offering")
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-worker-1", medium_id),
+                    "Worker-1 scaled to 'medium' offering")
+                s.assert_true(
+                    self.verifier.verify_vm_offering(
+                        f"{NETWORK_NAME}-db", medium_id),
+                    "DB VM scaled to 'medium' offering")
+
+            # Verify disk sizes grew
+            s.assert_equal(
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-blob"),
+                30, "Blob volume grew to 30GB")
+            s.assert_equal(
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-dbdata"),
+                25, "DB volume grew to 25GB")
+
+            # Verify all VMs are Running after scale
+            web = self.verifier.verify_vm_exists(f"{NETWORK_NAME}-web")
+            s.assert_true(web is not None and web.get("state") == "Running",
+                          "Web VM is Running after scale")
+            db = self.verifier.verify_vm_exists(f"{NETWORK_NAME}-db")
+            s.assert_true(db is not None and db.get("state") == "Running",
+                          "DB VM is Running after scale")
 
         self.scenarios.append(s)
 

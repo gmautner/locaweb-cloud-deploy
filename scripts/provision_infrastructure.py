@@ -164,20 +164,20 @@ def find_keypair(name):
 
 
 def find_vm(name):
-    """Find existing VM by name, return ID or None."""
+    """Find existing VM by name, return dict or None."""
     data = cmk_quiet("list", "virtualmachines", f"name={name}",
-                     "filter=id,name,state")
+                     "filter=id,name,state,serviceofferingid")
     if data:
         for vm in data.get("virtualmachine", []):
             if vm["name"] == name:
-                return vm["id"]
+                return vm
     return None
 
 
 def find_volume(name):
     """Find existing volume by name, return dict or None."""
     data = cmk_quiet("list", "volumes", f"name={name}", "type=DATADISK",
-                     "filter=id,name,virtualmachineid,state")
+                     "filter=id,name,virtualmachineid,state,size")
     if data:
         for v in data.get("volume", []):
             if v["name"] == name:
@@ -233,12 +233,21 @@ def deploy_vm(name, offering_id, template_id, zone_id, net_id, keypair_name,
               userdata_path=None):
     """Deploy a VM or return existing one's ID.
 
+    If the VM already exists but its service offering differs from the
+    desired one, it is scaled in-place via scale_vm().
+
     If userdata_path is provided and the file exists, the script is
     base64-encoded and passed as cloud-init userdata during deployment.
     """
-    vm_id = find_vm(name)
-    if vm_id:
-        print(f"  Already exists: {name} ({vm_id})")
+    vm = find_vm(name)
+    if vm:
+        vm_id = vm["id"]
+        current_offering = vm.get("serviceofferingid", "")
+        if current_offering and current_offering != offering_id:
+            print(f"  Offering changed: {name} ({vm_id})")
+            scale_vm(vm_id, name, offering_id)
+        else:
+            print(f"  Already exists: {name} ({vm_id})")
         return vm_id
     deploy_args = [
         "deploy", "virtualmachine",
@@ -260,13 +269,61 @@ def deploy_vm(name, offering_id, template_id, zone_id, net_id, keypair_name,
     return vm_id
 
 
+def scale_vm(vm_id, name, new_offering_id):
+    """Scale a VM to a new service offering (in-place).
+
+    Attempts a live scale first.  If that fails (e.g. the offering
+    requires a different CPU/RAM family), falls back to stop → scale → start.
+    """
+    try:
+        cmk("scale", "virtualmachine",
+            f"id={vm_id}", f"serviceofferingid={new_offering_id}")
+        print(f"  Scaled: {name} (live)")
+    except RuntimeError:
+        print(f"  Live scale failed, stopping VM for offline scale...")
+        cmk("stop", "virtualmachine", f"id={vm_id}")
+        for _ in range(30):  # wait up to ~150s
+            vm = find_vm(name)
+            if vm and vm.get("state") == "Stopped":
+                break
+            time.sleep(5)
+        cmk("scale", "virtualmachine",
+            f"id={vm_id}", f"serviceofferingid={new_offering_id}")
+        cmk("start", "virtualmachine", f"id={vm_id}")
+        print(f"  Scaled: {name} (offline — stopped, scaled, started)")
+
+
+def resize_volume(vol, desired_gb, desc):
+    """Resize a volume if needed.  Rejects shrink requests.
+
+    Args:
+        vol: Volume dict from find_volume (must include 'size' in bytes).
+        desired_gb: Desired size in GB.
+        desc: Human-readable description for log messages.
+    """
+    current_bytes = vol.get("size", 0)
+    desired_bytes = desired_gb * (1024 ** 3)
+    if desired_bytes > current_bytes:
+        cmk("resize", "volume", f"id={vol['id']}", f"size={desired_gb}")
+        print(f"    Resized {desc}: {current_bytes // (1024**3)}GB -> {desired_gb}GB")
+    elif desired_bytes < current_bytes:
+        raise RuntimeError(
+            f"Cannot shrink {desc}: current {current_bytes // (1024**3)}GB "
+            f"> desired {desired_gb}GB")
+
+
 def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
                 network_name, desc):
-    """Create, tag, and attach a data disk, or skip if it already exists."""
+    """Create, tag, and attach a data disk, or skip if it already exists.
+
+    If the disk already exists but is smaller than size_gb, it is resized
+    in-place.  Shrinking is rejected with an error.
+    """
     vol = find_volume(disk_name)
     if vol:
         vol_id = vol["id"]
         print(f"  {desc}: already exists ({vol_id})")
+        resize_volume(vol, size_gb, desc)
         if not vol.get("virtualmachineid"):
             cmk("attach", "volume", f"id={vol_id}",
                 f"virtualmachineid={vm_id}")
@@ -461,11 +518,11 @@ def provision(config, repo_name, unique_id, public_key):
     removed = 0
     while True:
         worker_name = f"{network_name}-worker-{excess_idx}"
-        vm_id = find_vm(worker_name)
-        if not vm_id:
+        vm = find_vm(worker_name)
+        if not vm:
             break
         print(f"  Removing: {worker_name}")
-        remove_vm_and_ip(worker_name, vm_id, net_id)
+        remove_vm_and_ip(worker_name, vm["id"], net_id)
         removed += 1
         excess_idx += 1
     if removed == 0:

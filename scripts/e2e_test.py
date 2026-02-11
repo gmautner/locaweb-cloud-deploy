@@ -664,16 +664,19 @@ class E2ETestRunner:
     # ------------------------------------------------------------------
 
     def _scenario_scale_up(self):
-        s = TestScenario("Scale Up Workers (1 -> 3)")
+        s = TestScenario("Scale Up Workers (1 -> 3) + Offerings & Disks")
         with s:
-            # Deploy with 1 worker + explicit disk sizes
+            # Deploy with 1 worker, small plans, smaller disks
             output = trigger_deploy({
                 "zone": ZONE,
+                "web_plan": "small",
                 "workers_enabled": "true",
                 "workers_replicas": "1",
+                "workers_plan": "small",
                 "db_enabled": "true",
-                "blob_disk_size_gb": "30",
-                "db_disk_size_gb": "25",
+                "db_plan": "small",
+                "blob_disk_size_gb": "25",
+                "db_disk_size_gb": "20",
             })
 
             web_ip = output.get("web_ip", "")
@@ -689,7 +692,7 @@ class E2ETestRunner:
                 http.wait_for_healthy("/up", timeout=300),
                 "HTTP /up returns 200 (initial deploy)")
 
-            # Verify explicit disk sizes
+            # Verify initial disk sizes
             s.assert_true(
                 self.ssh.wait_for_ssh(web_ip, timeout=60),
                 "SSH to web VM: reachable")
@@ -697,8 +700,8 @@ class E2ETestRunner:
                 self.ssh.verify_mount_point(web_ip, "/data/blobs"),
                 "SSH to web VM: /data/blobs mounted")
             blob_size = self.ssh.get_block_device_size(web_ip, "/data/blobs")
-            s.assert_equal(blob_size, 30 * 1024**3,
-                           "Blob disk explicit size is 30GB")
+            s.assert_equal(blob_size, 25 * 1024**3,
+                           "Blob disk initial size is 25GB")
 
             if db_ip:
                 s.assert_true(
@@ -708,8 +711,8 @@ class E2ETestRunner:
                     self.ssh.verify_mount_point(db_ip, "/data/db"),
                     "SSH to DB VM: /data/db mounted")
                 db_size = self.ssh.get_block_device_size(db_ip, "/data/db")
-                s.assert_equal(db_size, 25 * 1024**3,
-                               "DB disk explicit size is 25GB")
+                s.assert_equal(db_size, 20 * 1024**3,
+                               "DB disk initial size is 20GB")
 
             # Verify the single worker has env vars
             if worker_ips:
@@ -719,14 +722,17 @@ class E2ETestRunner:
                 s.assert_true(container,
                               "Initial worker: app container found")
 
-            # Scale up to 3 workers
+            # Scale up: 3 workers, medium plans, larger disks
             output2 = trigger_deploy({
                 "zone": ZONE,
+                "web_plan": "medium",
                 "workers_enabled": "true",
                 "workers_replicas": "3",
+                "workers_plan": "medium",
                 "db_enabled": "true",
-                "blob_disk_size_gb": "30",
-                "db_disk_size_gb": "25",
+                "db_plan": "medium",
+                "blob_disk_size_gb": "35",
+                "db_disk_size_gb": "30",
             })
 
             worker_ips2 = output2.get("worker_ips", [])
@@ -746,8 +752,26 @@ class E2ETestRunner:
                     s.assert_true(my_var is not None and my_var != "",
                                   f"Worker-{i} (scaled): MY_VAR is set")
 
+            # Verify disk sizes grew after scale-up
+            web_ip2 = output2.get("web_ip", web_ip)
+            s.assert_true(
+                self.ssh.wait_for_ssh(web_ip2, timeout=60),
+                "SSH to web VM after scale: reachable")
+            blob_size2 = self.ssh.get_block_device_size(web_ip2, "/data/blobs")
+            s.assert_equal(blob_size2, 35 * 1024**3,
+                           "Blob disk grew to 35GB after scale")
+
+            db_ip2 = output2.get("db_ip", db_ip)
+            if db_ip2:
+                s.assert_true(
+                    self.ssh.wait_for_ssh(db_ip2, timeout=60),
+                    "SSH to DB VM after scale: reachable")
+                db_size2 = self.ssh.get_block_device_size(db_ip2, "/data/db")
+                s.assert_equal(db_size2, 30 * 1024**3,
+                               "DB disk grew to 30GB after scale")
+
             # App still works after scale
-            http2 = HTTPVerifier(output2.get("web_ip", web_ip))
+            http2 = HTTPVerifier(web_ip2)
             s.assert_true(
                 http2.wait_for_healthy("/up", timeout=120),
                 "HTTP /up returns 200 (after scale up)")
