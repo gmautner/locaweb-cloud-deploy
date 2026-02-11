@@ -108,13 +108,13 @@ def trigger_workflow(workflow, inputs):
 
 def wait_for_run(run_id):
     """Wait for a workflow run to complete. Raises on failure."""
-    print(f"  Watching run {run_id}...")
-    rc, stdout, stderr = gh(
-        "run", "watch", str(run_id),
-        "--exit-status",
-        "-R", REPO_FULL,
-        check=False,
-    )
+    print(f"  Watching run {run_id} (timeout {WORKFLOW_WATCH_TIMEOUT}s)...")
+    cmd = ["gh", "run", "watch", str(run_id),
+           "--exit-status", "-R", REPO_FULL]
+    print(f"  $ {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True,
+                            timeout=WORKFLOW_WATCH_TIMEOUT)
+    rc, stdout, stderr = result.returncode, result.stdout.strip(), result.stderr.strip()
     if rc != 0:
         # Print the run URL for debugging
         gh("run", "view", str(run_id), "--web",
