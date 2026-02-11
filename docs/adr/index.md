@@ -17,3 +17,4 @@ This directory contains the Architectural Decision Records (ADRs) for the `locaw
 | [ADR-011](011-teardown-and-redeploy-recovery.md) | Teardown-and-Redeploy as Recovery Strategy | Accepted |
 | [ADR-012](012-standardized-postgres-env-vars.md) | Standardized PostgreSQL Environment Variables | Accepted |
 | [ADR-013](013-kamal-prefix-env-vars.md) | KAMAL_ Prefix Convention for Custom Environment Variables | Accepted |
+| [ADR-014](014-e2e-test-orchestration.md) | E2E Test Orchestration via Real Workflow Triggers | Accepted |

@@ -53,7 +53,8 @@ The system is composed of five logical layers:
 ```
 +---------------------------------------------------------------+
 |                      GitHub Actions                           |
-|  (Orchestration: deploy.yml, teardown.yml, test.yml)          |
+|  (Orchestration: deploy.yml, teardown.yml, test.yml,          |
+|   e2e-test.yml)                                               |
 +---------------------------------------------------------------+
         |                    |                    |
         v                    v                    v
@@ -100,11 +101,13 @@ Examples:
 
 ### 1. GitHub Actions Workflows
 
-Three workflow files orchestrate the system. All are triggered by `workflow_dispatch` (manual trigger).
+Four workflow files orchestrate the system. All are triggered by `workflow_dispatch` (manual trigger).
 
 #### deploy.yml
 
 A single-job workflow that provisions infrastructure and deploys the application sequentially. The job runs on `ubuntu-latest` and requires `contents: read` and `packages: write` permissions (the latter for ghcr.io image pushes).
+
+**Concurrency:** Shares a concurrency group (`deploy-${{ github.repository }}`) with `teardown.yml` to prevent overlapping infrastructure operations. `cancel-in-progress` is false so queued runs wait rather than cancel.
 
 **Workflow inputs** (all configurable at dispatch time):
 
@@ -142,7 +145,7 @@ A single-job workflow that provisions infrastructure and deploys the application
 
 #### teardown.yml
 
-Destroys all CloudStack resources in reverse creation order. Uses the same CloudMonkey installation pattern as the deploy workflow.
+Destroys all CloudStack resources in reverse creation order. Uses the same CloudMonkey installation pattern as the deploy workflow. Shares the `deploy-${{ github.repository }}` concurrency group with `deploy.yml`.
 
 **Destruction sequence (8 steps):**
 
@@ -159,7 +162,7 @@ The teardown script treats all `cmk` failures as non-fatal warnings because reso
 
 #### test.yml
 
-An end-to-end integration test workflow that validates infrastructure provisioning across multiple scenarios. Uses `github.run_id` as the unique identifier to isolate test resources from production.
+An infrastructure-focused integration test workflow that validates CloudStack provisioning across multiple scenarios. Uses `github.run_id` as the unique identifier to isolate test resources from production. This workflow tests resource creation, idempotency, and teardown but does **not** run Kamal or deploy the application.
 
 **Test phases:**
 
@@ -176,6 +179,43 @@ An end-to-end integration test workflow that validates infrastructure provisioni
 | 3c | Teardown verify | Final cleanup and verification |
 
 The test workflow generates a fresh ed25519 SSH key pair per run to avoid CloudStack's unique-public-key-per-account constraint. An **emergency teardown** step runs unconditionally (`if: always()`) to ensure test resources are cleaned up even if the test suite crashes. Results are saved to `/tmp/test-results.json` and rendered as a Markdown table in the step summary.
+
+#### e2e-test.yml
+
+An application-focused E2E test workflow that triggers the **real** `deploy.yml` workflow, waits for it to complete, then verifies the deployed application works correctly. Unlike `test.yml` which validates CloudStack resources, this workflow validates the full deployment pipeline including Kamal, container deployment, and application behavior.
+
+**Concurrency:** Uses its own concurrency group (`e2e-test-${{ github.repository }}`), separate from the `deploy-${{ github.repository }}` group shared by `deploy.yml` and `teardown.yml`. This prevents deadlocks: the E2E workflow triggers deploy/teardown via `gh workflow run`, and if they shared a group, the triggered workflow would queue behind the E2E run that's waiting for it.
+
+**Permissions:** `contents: read`, `actions: write` (the latter is needed to trigger workflows via the `gh` CLI).
+
+**Workflow inputs:**
+
+| Input | Type | Default | Description |
+|---|---|---|---|
+| `zone` | choice | `ZP01` | CloudStack availability zone |
+| `scenario` | choice | `all` | Test scenario: `complete`, `web-only`, `scale-up`, `scale-down`, or `all` |
+
+**Step sequence:**
+
+1. **Checkout repository**
+2. **Install and configure CloudMonkey** -- for emergency teardown (direct script call).
+3. **Prepare SSH key** -- from `SSH_PRIVATE_KEY` secret.
+4. **Initial teardown** -- direct script call to clean up any leftover resources.
+5. **Run E2E tests** -- executes `scripts/e2e_test.py`, the Python orchestrator.
+6. **Emergency teardown** (`if: always()`) -- direct script call for cleanup on failure.
+7. **Test summary** -- reads results JSON and renders a Markdown table in `$GITHUB_STEP_SUMMARY`.
+
+**Test scenarios:**
+
+| Scenario | Deploy inputs | Verifications |
+|---|---|---|
+| `complete` | zone, workers=1, db=true | /up→200, page content, POST note, file upload, blob mount + writable, DB mount, implicit disk sizes (20GB), worker container env vars |
+| `web-only` | zone only (defaults) | /up→200 (no DB), "Database not configured" message, env vars visible, file upload, blob mount, no workers/DB in output |
+| `scale-up` | workers 1→3, db=true, explicit disk sizes (30GB blob, 25GB db) | Initial worker verified, then 3 workers all have app container + env vars, explicit disk sizes verified, app healthy after scale |
+| `scale-down` | workers 3→1, db=true | 3 workers initially, then 1 remains with app + env vars, app healthy after scale |
+| `all` | Runs all four in sequence | Each scenario triggers its own teardown at the end |
+
+**Workflow triggering pattern:** The E2E script records the latest run ID before triggering `gh workflow run`, then polls until a new run with a higher ID appears. It then uses `gh run watch --exit-status` to wait for completion and `gh run download` to retrieve the provision-output artifact.
 
 ### 2. CloudStack Provisioning Script
 
@@ -220,6 +260,17 @@ A custom test framework with `TestScenario` (context manager for assertion track
 
 - **SSHVerifier**: Polls SSH connectivity with 10-second intervals and 180-second timeout. Verifies remote mount points by running `mountpoint -q` via SSH.
 - **InfrastructureVerifier**: Queries CloudStack via `cmk` to verify existence/absence of networks, VMs, volumes, snapshot policies, public IPs, firewall rules, static NAT mappings, and SSH key pairs.
+
+### 4b. E2E Test Script
+
+**File:** `scripts/e2e_test.py`
+
+An application-level test orchestrator that triggers real workflow runs and verifies the deployed application. Uses the same `TestScenario` assertion pattern as `test_infrastructure.py` for consistent results output. Includes:
+
+- **SSHVerifier**: SSH connectivity, mount point verification, disk write tests, Docker container discovery, and container environment variable checks via `docker exec`.
+- **HTTPVerifier**: HTTP GET/POST with `Host` header for kamal-proxy routing, health check polling, form submission, and multipart file upload.
+- **Workflow helpers**: Triggers `deploy.yml` and `teardown.yml` via `gh workflow run`, polls for new run detection, watches completion with `gh run watch`, and downloads artifacts.
+- **Disk size verification**: Uses `blockdev --getsize64` via SSH to verify raw block device sizes match the provisioned disk sizes (both implicit defaults and explicit inputs).
 
 ### 5. Kamal 2 Deployment Configuration
 
@@ -333,11 +384,14 @@ The platform provides the following environment variables to the application con
 
 A Flask web application that exercises all platform features:
 
-- **PostgreSQL CRUD**: A `notes` table for creating and listing text notes. Configuration via environment variables (`POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`).
-- **Filesystem blob storage**: File uploads saved to the path specified by `BLOB_STORAGE_PATH` (default: `/data/blobs`), with timestamp-prefixed filenames.
-- **Health check endpoint**: `GET /up` runs `SELECT 1` against PostgreSQL and returns 200 OK or 503 if the database is unavailable. This endpoint is used by kamal-proxy for health-based routing.
+- **Graceful DB handling**: A `DB_CONFIGURED` flag checks whether `POSTGRES_HOST` is set. When the database is not configured, the app operates in a degraded mode: the health check returns 200, the index page shows "Database not configured", and the notes form is hidden. When the database is configured but unreachable, `/up` returns 503 and the page shows "Database unavailable".
+- **PostgreSQL CRUD**: A `notes` table for creating and listing text notes. Configuration via environment variables (`POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`). Only active when `DB_CONFIGURED` is true.
+- **Filesystem blob storage**: File uploads saved to the path specified by `BLOB_STORAGE_PATH` (default: `/data/blobs`), with timestamp-prefixed filenames. Works regardless of database configuration.
+- **Health check endpoint**: `GET /up` returns 200 OK when the database is not configured (web-only mode) or when `SELECT 1` succeeds. Returns 503 only when the database is configured but unreachable. This endpoint is used by kamal-proxy for health-based routing.
+- **Custom environment variables**: Displays `MY_VAR` and `MY_SECRET` values on the index page, demonstrating the `KAMAL_` prefix injection mechanism.
+- **HTTP request headers**: Displays all incoming HTTP request headers on the index page for debugging proxy behavior.
 
-**Dockerfile:** Based on `python:3.12-slim`. The CMD retries `init_db()` up to 30 times with 2-second sleep between attempts (to wait for the PostgreSQL accessory to become available), then starts gunicorn with 2 workers on port 80.
+**Dockerfile:** Based on `python:3.12-slim`. The CMD conditionally retries `init_db()` up to 30 times only when `POSTGRES_HOST` is set (to wait for the PostgreSQL accessory to become available), then always starts gunicorn with `exec` for proper signal handling. When no database is configured, gunicorn starts immediately without the init_db retry loop.
 
 ### 7. VM Userdata Scripts
 
@@ -452,6 +506,41 @@ HTTP Request -> Public IP -> Static NAT -> Web VM:80
       -> Blob storage (/data/blobs on mounted data disk)
 ```
 
+### E2E test data flow
+
+```
+1. User triggers e2e-test.yml (workflow_dispatch)
+   |
+   v
+2. Initial teardown (direct script call)
+   |
+   v
+3. For each scenario:
+   |
+   +-- Trigger deploy.yml via `gh workflow run`
+   +-- Poll for new run (ID > previous latest)
+   +-- Watch run until completion (`gh run watch`)
+   +-- Download provision-output artifact
+   |
+   v
+4. Verify deployed application
+   |
+   +-- HTTP: GET /up (health check, 200 expected)
+   +-- HTTP: GET / (page content, env vars, DB status)
+   +-- HTTP: POST /notes (create note, verify in page)
+   +-- HTTP: POST /upload (file upload, verify in page)
+   +-- SSH: mountpoint -q /data/blobs (web VM)
+   +-- SSH: mountpoint -q /data/db (DB VM)
+   +-- SSH: blockdev --getsize64 (disk size verification)
+   +-- SSH: docker exec printenv (worker env vars)
+   |
+   v
+5. Trigger teardown.yml via `gh workflow run`
+   |
+   v
+6. Save results JSON -> GitHub step summary
+```
+
 ### Teardown data flow
 
 ```
@@ -535,11 +624,13 @@ This enables safe re-execution after partial failures and supports incremental t
 - **readiness_delay**: 15-second delay before health checks begin, allowing the application to initialize.
 - **deploy_timeout**: 180-second timeout for deployment operations.
 - **drain_timeout**: 30-second timeout for draining in-flight requests during container replacement.
-- **Health checks**: kamal-proxy checks `GET /up` every 3 seconds with a 5-second timeout. The endpoint verifies database connectivity.
+- **Health checks**: kamal-proxy checks `GET /up` every 3 seconds with a 5-second timeout. The endpoint returns 200 when the database is not configured (web-only mode) or when the database is reachable. It returns 503 only when the database is configured but unreachable.
 
 ### Test coverage
 
-The test suite validates:
+Two complementary test suites validate the system at different levels:
+
+**Infrastructure tests** (`test.yml` / `test_infrastructure.py`) validate:
 
 - Resource creation and absence for all resource types.
 - Scale-up from 1 to 3 workers and scale-down from 3 to 1.
@@ -549,6 +640,20 @@ The test suite validates:
 - Static NAT mapping correctness (each IP points to the expected VM).
 - Complete teardown verification (no orphaned resources).
 - Emergency cleanup on test failure.
+
+**E2E application tests** (`e2e-test.yml` / `e2e_test.py`) validate:
+
+- Full deploy pipeline (provision + Kamal + container start).
+- HTTP health check (`/up` returns 200).
+- Application page content (notes, file listings, env vars).
+- Database operations (POST note, verify in page).
+- File uploads (POST multipart, verify in page).
+- Graceful degradation (web-only mode shows "Database not configured").
+- Disk mount points and write access via SSH.
+- Disk size verification (implicit defaults and explicit inputs) via `blockdev --getsize64`.
+- Worker container environment variables via `docker exec printenv`.
+- Scale-up and scale-down with application verification after each change.
+- Teardown via real workflow trigger.
 
 ---
 
@@ -601,3 +706,10 @@ The test suite validates:
 - No authentication or authorization.
 - File uploads are stored with timestamp-prefixed names but no deduplication.
 - The `lost+found` directory in `/data/blobs` is explicitly filtered out of the file listing.
+- The `psycopg2` import is deferred to `get_db()` to avoid import failures when no database is configured. This means import errors are only caught at runtime.
+
+### E2E test constraints
+
+- E2E tests use `github.repository_id` for resource naming, sharing the same namespace as production deployments. Running E2E tests will tear down any existing production deployment.
+- Each scenario takes 8-15 minutes (provisioning + Kamal deploy + verification + teardown). The "all" scenario may take 45-60 minutes.
+- The E2E workflow requires `KAMAL_MY_VAR` (variable) and `KAMAL_MY_SECRET` (secret) to be configured in the repository for environment variable verification.

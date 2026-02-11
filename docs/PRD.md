@@ -100,7 +100,10 @@ Users of the workflow (whether human or agent) should not need to interact direc
 
 | ID | Requirement |
 |----|-------------|
-| FR-25 | An end-to-end test workflow shall validate all deployment scenarios (web-only, web+db, web+workers, full stack). |
+| FR-25 | An infrastructure test workflow (`test.yml`) shall validate all provisioning scenarios (resource creation, scale-up/down, teardown) using CloudStack API verification and SSH connectivity checks. |
+| FR-33 | An E2E test workflow (`e2e-test.yml`) shall trigger the real `deploy.yml` workflow, wait for completion, and verify application behavior: HTTP health checks, page content, database operations, file uploads, SSH mount points, disk sizes, and container environment variables. |
+| FR-34 | The E2E test workflow shall support selectable scenarios: `complete` (full stack), `web-only`, `scale-up`, `scale-down`, and `all`. |
+| FR-35 | The E2E test workflow shall use a separate concurrency group from deploy/teardown to prevent deadlocks when triggering workflows. |
 
 ### 4.6 Input Validation
 
@@ -118,8 +121,9 @@ The deployed application must meet the following contract:
 | FR-28 | The application shall be built from a single Dockerfile at the repository root. |
 | FR-29 | If using workers, the same Dockerfile shall support a configurable CMD entrypoint for the worker process. |
 | FR-30 | If connecting to a database, the application shall read connection information from environment variables: `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DATABASE_URL`. |
-| FR-31 | The application shall provide a health check endpoint at `/up` that returns HTTP 200 when healthy. |
+| FR-31 | The application shall provide a health check endpoint at `/up` that returns HTTP 200 when healthy. When the database is not configured (`POSTGRES_HOST` absent or empty), `/up` shall return 200 without attempting a database connection. |
 | FR-32 | The application shall be designed to scale vertically (larger VM) rather than horizontally (multiple web instances), as kamal-proxy with Let's Encrypt operates on a single web VM. |
+| FR-36 | The application shall degrade gracefully when the database is not configured: the index page shall display "Database not configured" instead of crashing, and all non-database features (file uploads, environment variable display) shall continue to work. |
 
 ---
 
@@ -209,7 +213,14 @@ The following GitHub Actions secrets must be configured in the repository:
 | `SSH_PRIVATE_KEY` | Always | SSH private key used for VM access during provisioning and Kamal deployment. |
 | `POSTGRES_USER` | When `db_enabled` | PostgreSQL superuser name. Validated at workflow start; workflow fails fast if missing. |
 | `POSTGRES_PASSWORD` | When `db_enabled` | PostgreSQL superuser password. Validated at workflow start; workflow fails fast if missing. |
-| `GITHUB_TOKEN` | Automatic | Provided automatically by GitHub Actions. Used for pushing container images to ghcr.io. |
+| `GITHUB_TOKEN` | Automatic | Provided automatically by GitHub Actions. Used for pushing container images to ghcr.io and for triggering workflows from the E2E test. |
+
+Additionally, the following `KAMAL_`-prefixed entries are used by the E2E test suite to verify custom environment variable injection:
+
+| Entry | Type | Description |
+|-------|------|-------------|
+| `KAMAL_MY_VAR` | Variable | Test variable; becomes `MY_VAR` in the container. |
+| `KAMAL_MY_SECRET` | Secret | Test secret; becomes `MY_SECRET` in the container. |
 
 ---
 
@@ -254,16 +265,23 @@ locaweb-ai-deploy/
 |   `-- workflows/
 |       |-- deploy.yml                  Provision + deploy workflow
 |       |-- teardown.yml                Destroy all resources workflow
-|       `-- test.yml                    End-to-end infrastructure tests
+|       |-- test.yml                    Infrastructure validation tests
+|       `-- e2e-test.yml               E2E application test workflow
 |-- scripts/
 |   |-- provision_infrastructure.py     CloudStack provisioning (idempotent)
 |   |-- teardown_infrastructure.py      CloudStack resource cleanup
-|   |-- test_infrastructure.py          E2E test suite
+|   |-- test_infrastructure.py          Infrastructure test suite
+|   |-- e2e_test.py                     E2E test orchestrator
+|   |-- build_config.py                 Build deployment config from inputs
+|   |-- generate_kamal_config.py        Generate Kamal deploy config
+|   |-- create_kamal_secrets.py         Create Kamal secrets + KAMAL_ prefix processing
 |   `-- userdata/
 |       |-- web_vm.sh                   Cloud-init: format/mount blob disk
 |       `-- db_vm.sh                    Cloud-init: format/mount data disk
 `-- docs/
-    `-- PRD.md                          This document
+    |-- PRD.md                          This document
+    |-- architecture.md                 Architecture design document
+    `-- adr/                            Architectural decision records
 ```
 
 ---
