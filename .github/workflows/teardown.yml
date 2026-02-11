@@ -9,6 +9,10 @@
 
 name: Teardown
 
+concurrency:
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
 

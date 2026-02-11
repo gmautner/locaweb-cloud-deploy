@@ -11,4 +11,4 @@ RUN mkdir -p /data/blobs
 
 EXPOSE 80
 
-CMD ["sh", "-c", "for i in $(seq 1 30); do python -c 'from app import init_db; init_db()' && break || sleep 2; done && gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
+CMD ["sh", "-c", "if [ -n \"$POSTGRES_HOST\" ]; then for i in $(seq 1 30); do python -c 'from app import init_db; init_db()' && break || sleep 2; done; fi; exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]

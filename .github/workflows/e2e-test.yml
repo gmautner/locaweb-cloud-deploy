@@ -1,0 +1,148 @@
+# E2E Test Workflow
+#
+# Triggers the real deploy.yml workflow, waits for it, then verifies
+# the deployed application works correctly (HTTP, SSH, disk mounts, env vars).
+#
+# Uses its own concurrency group to avoid deadlocking with deploy/teardown.
+#
+# Required GitHub Secrets:
+#   CLOUDSTACK_API_KEY    - CloudStack API key
+#   CLOUDSTACK_SECRET_KEY - CloudStack secret key
+#   SSH_PRIVATE_KEY       - SSH private key for VM access
+#   POSTGRES_USER         - PostgreSQL username (for DB scenarios)
+#   POSTGRES_PASSWORD     - PostgreSQL password (for DB scenarios)
+#
+# Required GitHub Variables/Secrets with KAMAL_ prefix:
+#   KAMAL_MY_VAR (variable) - becomes MY_VAR in container
+#   KAMAL_MY_SECRET (secret) - becomes MY_SECRET in container
+
+name: E2E Test
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: e2e-test-${{ github.repository }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      zone:
+        description: "CloudStack zone"
+        type: choice
+        default: "ZP01"
+        options:
+          - ZP01
+          - ZP02
+      scenario:
+        description: "Test scenario"
+        type: choice
+        default: "all"
+        options:
+          - complete
+          - web-only
+          - scale-up
+          - scale-down
+          - all
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install and configure CloudMonkey
+        env:
+          CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
+          CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
+        run: |
+          wget -q https://github.com/apache/cloudstack-cloudmonkey/releases/latest/download/cmk.linux.x86-64
+          chmod +x cmk.linux.x86-64
+          sudo mv cmk.linux.x86-64 /usr/local/bin/cmk
+          cmk set url "https://painel-cloud.locaweb.com.br/client/api"
+          cmk set apikey "$CLOUDSTACK_API_KEY"
+          cmk set secretkey "$CLOUDSTACK_SECRET_KEY"
+          cmk set output json
+          cmk sync
+          echo "Verifying CloudStack connectivity..."
+          cmk list zones filter=name
+          echo "CloudMonkey configured successfully."
+
+      - name: Prepare SSH key
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          install -m 600 /dev/null /tmp/ssh_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          ssh-keygen -y -f /tmp/ssh_key > /tmp/ssh_key.pub
+          echo "SSH key prepared."
+
+      - name: Initial teardown
+        run: |
+          python3 -u scripts/teardown_infrastructure.py \
+            --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}" || true
+
+      - name: Run E2E tests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_FULL: ${{ github.repository }}
+          REPO_NAME: ${{ github.event.repository.name }}
+          REPO_ID: ${{ github.repository_id }}
+          ZONE: ${{ inputs.zone || 'ZP01' }}
+          SCENARIO: ${{ inputs.scenario || 'all' }}
+          SSH_KEY_PATH: /tmp/ssh_key
+        run: |
+          python3 -u scripts/e2e_test.py
+
+      - name: Emergency teardown
+        if: always()
+        run: |
+          echo "Emergency teardown..."
+          python3 -u scripts/teardown_infrastructure.py \
+            --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}" || true
+
+      - name: Test summary
+        if: always()
+        run: |
+          python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+          import json, os
+          results_path = "/tmp/e2e-test-results.json"
+          if not os.path.exists(results_path):
+              print("## E2E Test Results")
+              print("")
+              print("No test results found — the test suite may have crashed before producing output.")
+              exit(0)
+          with open(results_path) as f:
+              results = json.load(f)
+          total_pass = results["total_pass"]
+          total_fail = results["total_fail"]
+          status = "ALL PASSED" if total_fail == 0 else "FAILURES DETECTED"
+          print(f"## E2E Test Results — {status}")
+          print("")
+          print(f"**{total_pass}** passed, **{total_fail}** failed, **{total_pass + total_fail}** total")
+          print(f"**Duration:** {results['total_duration']:.0f}s")
+          print("")
+          print("| # | Scenario | Status | Duration | Pass | Fail |")
+          print("|---|----------|--------|----------|------|------|")
+          for i, s in enumerate(results["scenarios"], 1):
+              icon = "PASS" if s["status"] == "PASS" else "FAIL"
+              passed = sum(1 for a in s["assertions"] if a["passed"])
+              failed = sum(1 for a in s["assertions"] if not a["passed"])
+              print(f"| {i} | {s['name']} | {icon} | {s['duration']:.0f}s | {passed} | {failed} |")
+          if total_fail > 0:
+              print("")
+              print("### Failed Assertions")
+              print("")
+              for s in results["scenarios"]:
+                  failures = [a for a in s["assertions"] if not a["passed"]]
+                  if failures:
+                      print(f"**{s['name']}:**")
+                      for a in failures:
+                          print(f"- {a['message']}")
+                      print("")
+          PYEOF

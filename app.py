@@ -7,9 +7,10 @@ import os
 from datetime import datetime, timezone
 
 from flask import Flask, request, redirect, url_for, render_template_string
-import psycopg2
 
 app = Flask(__name__)
+
+DB_CONFIGURED = bool(os.environ.get("POSTGRES_HOST", "").strip())
 
 DB_CONFIG = {
     "host": os.environ.get("POSTGRES_HOST", "localhost"),
@@ -27,6 +28,11 @@ TEMPLATE = """<!DOCTYPE html>
 <body>
 <h1>Locaweb Cloud Test App</h1>
 <h2>Notes (PostgreSQL)</h2>
+{% if db_status is none %}
+<p><em>Database not configured</em></p>
+{% elif db_status == false %}
+<p><em>Database unavailable</em></p>
+{% else %}
 <form method="POST" action="/notes">
   <input name="content" placeholder="New note..." size="40" required>
   <button type="submit">Add</button>
@@ -36,6 +42,7 @@ TEMPLATE = """<!DOCTYPE html>
   <li>{{ note[1] }} <small>({{ note[2] }})</small></li>
 {% endfor %}
 </ul>
+{% endif %}
 <h2>Custom Environment Variables</h2>
 <ul>
   <li><strong>MY_VAR:</strong> {{ my_var or '<em>not set</em>' }}</li>
@@ -56,6 +63,7 @@ TEMPLATE = """<!DOCTYPE html>
 
 
 def get_db():
+    import psycopg2
     return psycopg2.connect(**DB_CONFIG)
 
 
@@ -77,6 +85,8 @@ def init_db():
 @app.route("/up")
 def health():
     """Health check endpoint required by kamal-proxy."""
+    if not DB_CONFIGURED:
+        return "OK", 200
     try:
         conn = get_db()
         cur = conn.cursor()
@@ -90,12 +100,20 @@ def health():
 
 @app.route("/")
 def index():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("SELECT id, content, created_at FROM notes ORDER BY id DESC LIMIT 20")
-    notes = cur.fetchall()
-    cur.close()
-    conn.close()
+    notes = []
+    db_status = None  # None = not configured, True = connected, False = error
+
+    if DB_CONFIGURED:
+        try:
+            conn = get_db()
+            cur = conn.cursor()
+            cur.execute("SELECT id, content, created_at FROM notes ORDER BY id DESC LIMIT 20")
+            notes = cur.fetchall()
+            cur.close()
+            conn.close()
+            db_status = True
+        except Exception:
+            db_status = False
 
     files = []
     if os.path.isdir(BLOB_PATH):
@@ -105,11 +123,14 @@ def index():
     my_secret = os.environ.get("MY_SECRET", "")
 
     return render_template_string(TEMPLATE, notes=notes, files=files,
-                                  my_var=my_var, my_secret=my_secret)
+                                  my_var=my_var, my_secret=my_secret,
+                                  db_status=db_status)
 
 
 @app.route("/notes", methods=["POST"])
 def add_note():
+    if not DB_CONFIGURED:
+        return redirect(url_for("index"))
     content = request.form.get("content", "").strip()
     if content:
         conn = get_db()
@@ -132,5 +153,6 @@ def upload():
 
 
 if __name__ == "__main__":
-    init_db()
+    if DB_CONFIGURED:
+        init_db()
     app.run(host="0.0.0.0", port=80)
