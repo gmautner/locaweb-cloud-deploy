@@ -48,3 +48,10 @@ Use the sample FastAPI app in the root of the repo as the test application.
 ### Testing
 
 Reserve the **infrastructure test** workflow (`test-infrastructure.yml`) for after bigger or more impactful changes, as it takes a long time to complete.
+
+### Smoke Testing
+
+For quick manual verification against live infrastructure:
+
+- **CloudMonkey (cmk):** Available in the terminal for direct CloudStack API queries.
+- **SSH key:** `~/.ssh/locaweb-ai-deploy-key` — use this to SSH into deployed VMs (e.g., `ssh -i ~/.ssh/locaweb-ai-deploy-key root@<ip>`).

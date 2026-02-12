@@ -47,6 +47,29 @@ WORKFLOW_WATCH_TIMEOUT = 2400  # 40 minutes max for a deploy workflow
 
 
 # ---------------------------------------------------------------------------
+# CloudMonkey helper
+# ---------------------------------------------------------------------------
+
+def cmk(*args):
+    """Run a cmk command and return parsed JSON, or None on error."""
+    cmd = ["cmk"] + list(args)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        return json.loads(result.stdout)
+    return None
+
+
+def get_vm_offering_name(vm_id):
+    """Query the current service offering name of a VM via cmk."""
+    data = cmk("list", "virtualmachines", f"id={vm_id}",
+               "filter=id,serviceofferingname")
+    if data:
+        for vm in data.get("virtualmachine", []):
+            return vm.get("serviceofferingname")
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Workflow Triggering
 # ---------------------------------------------------------------------------
 
@@ -726,6 +749,21 @@ class E2ETestRunner:
                 s.assert_true(container,
                               "Initial worker: app container found")
 
+            # Verify initial offerings are "small" before scale-up
+            web_vm_id = output.get("web_vm_id", "")
+            worker_vm_ids = output.get("worker_vm_ids", [])
+            db_vm_id = output.get("db_vm_id", "")
+
+            for label, vm_id in [("Web", web_vm_id),
+                                 ("Worker-1", worker_vm_ids[0] if worker_vm_ids else ""),
+                                 ("DB", db_vm_id)]:
+                if vm_id:
+                    before = get_vm_offering_name(vm_id)
+                    print(f"    {label}: existing offer detected as: {before}")
+                    s.assert_equal(before, "small",
+                                   f"{label} offering is 'small' before scale")
+                    print(f"    {label}: offer used in next API call will be: medium")
+
             # Scale up: 3 workers, medium plans, larger disks
             output2 = trigger_deploy({
                 "zone": ZONE,
@@ -755,6 +793,16 @@ class E2ETestRunner:
                     my_var = self.ssh.get_container_env(wip, container, "MY_VAR")
                     s.assert_true(my_var is not None and my_var != "",
                                   f"Worker-{i} (scaled): MY_VAR is set")
+
+            # Verify offerings changed to "medium" after scale-up
+            for label, vm_id in [("Web", web_vm_id),
+                                 ("Worker-1", worker_vm_ids[0] if worker_vm_ids else ""),
+                                 ("DB", db_vm_id)]:
+                if vm_id:
+                    after = get_vm_offering_name(vm_id)
+                    s.assert_equal(after, "medium",
+                                   f"{label} offering is 'medium' after scale")
+                    print(f"    {label}: API call succeeded (now: {after})")
 
             # Verify disk sizes grew after scale-up
             web_ip2 = output2.get("web_ip", web_ip)
