@@ -66,6 +66,8 @@ Users of the workflow (whether human or agent) should not need to interact direc
 | FR-08 | The system shall attach a dedicated data disk to the web VM for blob storage, with a configurable size (default 20 GB). |
 | FR-09 | The system shall attach a dedicated data disk to the database VM (if enabled) for PostgreSQL data, with a configurable size (default 20 GB). |
 | FR-10 | The system shall configure daily snapshot policies with cross-zone replication for all data disks. |
+| FR-37 | The system shall support cross-zone disaster recovery by creating data volumes from snapshot replicas in a target zone, enabling recovery of blob and database data into a different zone than the original deployment. |
+| FR-38 | The disaster recovery flow shall perform pre-flight checks: no existing deployment in the target zone, and required snapshots available and in BackedUp state. |
 | FR-11 | Workers shall be stateless and shall not receive data disks. |
 | FR-12 | All provisioning operations shall be idempotent: re-running the workflow must detect and reuse existing resources. |
 
@@ -199,6 +201,7 @@ The deploy workflow (`deploy.yml`) accepts the following inputs via `workflow_di
 | `db_enabled` | boolean | false | Whether to provision a dedicated database VM and deploy PostgreSQL. |
 | `db_plan` | choice | -- | VM compute offering for the database VM. |
 | `db_disk_size_gb` | number | 20 | Size in GB of the persistent disk attached to the database VM for PostgreSQL data. |
+| `recover` | boolean | false | Recover from snapshots (cross-zone disaster recovery). When true, data disks are created from the latest available snapshots instead of blank. |
 
 ---
 
@@ -302,5 +305,5 @@ Longer-term directions under consideration:
 - **Custom domain support.** The `domain` workflow input is reserved for future implementation of custom domain routing, TLS certificate provisioning, and DNS record management.
 - **Monitoring and alerting.** Integrate application and infrastructure monitoring (metrics, logs, alerts) into the deployment workflow.
 - **Multi-environment support.** Enable staging/production environment separation with distinct resource naming and network isolation.
-- **Disaster recovery automation.** Add a workflow that recovers from infrastructure failures by re-provisioning and redeploying from the latest snapshot or backup.
+- ~~**Disaster recovery automation.**~~ Implemented: the `recover` workflow input enables cross-zone recovery from snapshot replicas.
 - **Vertical scaling of web and database.** The web and database tiers scale vertically (larger VM plans). Kamal Proxy with Let's Encrypt only works with a single web VM, so horizontal web scaling is not planned. The target workloads are expected to scale well vertically.

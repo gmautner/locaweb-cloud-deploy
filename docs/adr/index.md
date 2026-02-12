@@ -20,3 +20,4 @@ This directory contains the Architectural Decision Records (ADRs) for the `locaw
 | [ADR-014](014-e2e-test-orchestration.md) | E2E Test Orchestration via Real Workflow Triggers | Accepted |
 | [ADR-015](015-in-place-vm-scaling-and-disk-resize.md) | In-Place VM Scaling and Disk Resize | Accepted |
 | [ADR-016](016-custom-domain-ssl.md) | Custom Domain Support with Let's Encrypt SSL | Accepted |
+| [ADR-017](017-cross-zone-disaster-recovery.md) | Cross-Zone Disaster Recovery via Snapshot Replicas | Accepted |

@@ -123,6 +123,7 @@ A single-job workflow that provisions infrastructure and deploys the application
 | `db_enabled` | boolean | `false` | Whether to create a database VM |
 | `db_plan` | choice | `medium` | VM size for the database |
 | `db_disk_size_gb` | string | `20` | Data disk size for PostgreSQL |
+| `recover` | boolean | `false` | Recover data disks from snapshots (cross-zone DR) |
 
 **Step sequence:**
 
@@ -230,18 +231,20 @@ A Python script that uses the CloudMonkey CLI (`cmk`) to interact with the Cloud
 - **Static NAT conflict avoidance**: When assigning public IPs, the script first checks for existing static NAT mappings per VM. It reuses existing assignments and only acquires new IPs for VMs that lack one. This prevents CloudStack's "VM already has a static NAT IP" error during scale-up scenarios.
 - **Userdata injection**: Web and DB VMs receive base64-encoded cloud-init scripts that format and mount their data disks.
 - **Volume tagging**: Data disks are tagged with `locaweb-ai-deploy-id={network-name}` to enable the teardown script to find them reliably.
+- **Disaster recovery**: When `--recover` is passed, the script creates data volumes from the latest available snapshots (MANUAL or RECURRING, in BackedUp state) in the target zone instead of blank disks. Pre-flight checks verify no conflicting deployment exists and required snapshots are available. Snapshot policies are still created on recovered volumes for ongoing protection.
 - **Template discovery**: Automatically selects the most recent Ubuntu 24.x template matching the regex `^Ubuntu.*24.*$`.
 
 **Resource creation order:**
 
 1. Resolve zone, offerings, and template IDs.
+1b. (Recovery mode only) Run pre-flight checks: verify no existing deployment in target zone, locate snapshots.
 2. Create isolated network.
 3. Register SSH key pair.
 4. Deploy VMs (web always, workers if enabled, DB if enabled) with userdata.
 5. Remove excess workers (scale-down).
 6. Assign public IPs with static NAT (1:1 per VM).
 7. Create firewall rules (SSH+HTTP+HTTPS for web, SSH only for workers and DB).
-8. Create and attach data disks (blob for web, dbdata for DB).
+8. Create and attach data disks (blob for web, dbdata for DB). In recovery mode, disks are created from snapshots instead of blank.
 9. Create daily snapshot policies with cross-zone replication.
 10. Retrieve internal (private) IPs for inter-VM communication.
 
@@ -540,6 +543,31 @@ HTTP/HTTPS Request -> Public IP -> Static NAT -> Web VM:80/443
 6. Save results JSON -> GitHub step summary
 ```
 
+### Disaster recovery data flow
+
+```
+1. User triggers deploy.yml with recover=true, zone=<target-zone>
+   |
+   v
+2. Provision infrastructure
+   |
+   +-- Resolve zone, offerings, template
+   +-- Pre-flight checks:
+   |     - No existing network/volumes in target zone
+   |     - Snapshots available in target zone (BackedUp state)
+   +-- Create network, keypair, VMs (same as normal deploy)
+   +-- Create data disks FROM SNAPSHOTS (not blank)
+   |     - cmk create volume name=<name> snapshotid=<id>
+   +-- Tag and attach volumes to VMs
+   +-- Create new snapshot policies on recovered volumes
+   |
+   v
+3. Kamal setup (same as normal deploy)
+   |
+   v
+4. Application is live with recovered data
+```
+
 ### Teardown data flow
 
 ```
@@ -679,7 +707,7 @@ Two complementary test suites validate the system at different levels:
 ### Platform constraints
 
 - **CloudStack static NAT**: CloudStack enforces a one-to-one mapping between a public IP and a VM for static NAT. A VM cannot have two static NAT IPs. The provisioning script explicitly handles this by checking existing mappings before assigning new ones.
-- **Single availability zone**: All resources for a deployment are created in a single CloudStack zone (ZP01 or ZP02). Cross-zone redundancy is not supported.
+- **Single availability zone**: All resources for a deployment are created in a single CloudStack zone (ZP01 or ZP02). Cross-zone disaster recovery is supported via snapshot replication: the `recover` input creates data volumes from snapshots replicated to the target zone.
 - **VM plan names**: The provisioning script resolves service offering names (micro, small, medium, etc.) at runtime. Available offerings depend on the Locaweb Cloud account and zone.
 - **Data disk device path**: Userdata scripts hardcode `/dev/vdb` as the data disk device. This assumes the data disk is the first (and only) attached volume.
 

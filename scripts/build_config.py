@@ -17,6 +17,7 @@ config = {
     "db_enabled": os.environ.get("INPUT_DB_ENABLED") == "true",
     "db_plan": os.environ.get("INPUT_DB_PLAN") or "medium",
     "db_disk_size_gb": int(os.environ.get("INPUT_DB_DISK_SIZE_GB") or "20"),
+    "recover": os.environ.get("INPUT_RECOVER") == "true",
 }
 
 with open("/tmp/config.json", "w") as f:

@@ -103,6 +103,10 @@ on:
         description: "Enable automatic reboot after unattended upgrades"
         type: boolean
         default: true
+      recover:
+        description: "Recover from snapshots (cross-zone disaster recovery)"
+        type: boolean
+        default: false
       automatic_reboot_time_utc:
         description: "Automatic reboot time in HH:MM UTC"
         required: false
@@ -147,6 +151,7 @@ jobs:
           INPUT_DB_ENABLED: ${{ inputs.db_enabled }}
           INPUT_DB_PLAN: ${{ inputs.db_plan }}
           INPUT_DB_DISK_SIZE_GB: ${{ inputs.db_disk_size_gb }}
+          INPUT_RECOVER: ${{ inputs.recover }}
         run: python3 scripts/build_config.py
 
       - name: Extract SSH public key
@@ -177,12 +182,17 @@ jobs:
 
       - name: Provision infrastructure
         run: |
+          recover_flag=""
+          if [ "${{ inputs.recover }}" = "true" ]; then
+            recover_flag="--recover"
+          fi
           python3 -u scripts/provision_infrastructure.py \
             --repo-name "${{ github.event.repository.name }}" \
             --unique-id "${{ github.repository_id }}" \
             --config /tmp/config.json \
             --public-key /tmp/ssh_key.pub \
-            --output /tmp/provision-output.json
+            --output /tmp/provision-output.json \
+            $recover_flag
 
       - name: Set outputs
         id: outputs

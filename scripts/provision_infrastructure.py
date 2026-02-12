@@ -147,9 +147,12 @@ def discover_template(zone_id):
 # Idempotency helpers
 # ---------------------------------------------------------------------------
 
-def find_network(name):
+def find_network(name, zone_id=None):
     """Find existing network by name, return ID or None."""
-    data = cmk_quiet("list", "networks", "filter=id,name")
+    cmd = ["list", "networks", "filter=id,name"]
+    if zone_id:
+        cmd.append(f"zoneid={zone_id}")
+    data = cmk_quiet(*cmd)
     if data:
         for n in data.get("network", []):
             if n["name"] == name:
@@ -174,10 +177,13 @@ def find_vm(name):
     return None
 
 
-def find_volume(name):
+def find_volume(name, zone_id=None):
     """Find existing volume by name, return dict or None."""
-    data = cmk_quiet("list", "volumes", f"name={name}", "type=DATADISK",
-                     "filter=id,name,virtualmachineid,state,size")
+    cmd = ["list", "volumes", f"name={name}", "type=DATADISK",
+           "filter=id,name,virtualmachineid,state,size"]
+    if zone_id:
+        cmd.append(f"zoneid={zone_id}")
+    data = cmk_quiet(*cmd)
     if data:
         for v in data.get("volume", []):
             if v["name"] == name:
@@ -319,7 +325,7 @@ def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
     If the disk already exists but is smaller than size_gb, it is resized
     in-place.  Shrinking is rejected with an error.
     """
-    vol = find_volume(disk_name)
+    vol = find_volume(disk_name, zone_id)
     if vol:
         vol_id = vol["id"]
         print(f"  {desc}: already exists ({vol_id})")
@@ -366,6 +372,122 @@ def create_snapshot_policy(vol_id, network_name, snapshot_zoneids, desc):
         print(f"  {desc}: daily snapshot policy created")
 
 
+def find_latest_snapshots(network_name, zone_id, db_enabled):
+    """Find the latest snapshots for blob (and optionally dbdata) volumes.
+
+    Looks for snapshots in the given zone whose volume name matches
+    {network_name}-blob and {network_name}-dbdata.  Returns the most
+    recent snapshot of each type, keyed by "blob" and "dbdata".
+    """
+    data = cmk("list", "snapshots", f"zoneid={zone_id}",
+               "filter=id,name,volumename,created,state",
+               "snapshottype=MANUAL",
+               f"tags[0].key=locaweb-ai-deploy-id",
+               f"tags[0].value={network_name}")
+    snapshots = data.get("snapshot", [])
+
+    # Also check recurring (policy-created) snapshots
+    data2 = cmk("list", "snapshots", f"zoneid={zone_id}",
+                "filter=id,name,volumename,created,state",
+                "snapshottype=RECURRING",
+                f"tags[0].key=locaweb-ai-deploy-id",
+                f"tags[0].value={network_name}")
+    snapshots.extend(data2.get("snapshot", []))
+
+    blob_name = f"{network_name}-blob"
+    dbdata_name = f"{network_name}-dbdata"
+
+    result = {}
+
+    blob_snaps = sorted(
+        [s for s in snapshots
+         if s.get("volumename") == blob_name and s.get("state") == "BackedUp"],
+        key=lambda s: s["created"], reverse=True)
+    if blob_snaps:
+        result["blob"] = blob_snaps[0]
+
+    if db_enabled:
+        db_snaps = sorted(
+            [s for s in snapshots
+             if s.get("volumename") == dbdata_name and s.get("state") == "BackedUp"],
+            key=lambda s: s["created"], reverse=True)
+        if db_snaps:
+            result["dbdata"] = db_snaps[0]
+
+    return result
+
+
+def recovery_preflight(network_name, zone_id, db_enabled):
+    """Run pre-flight checks for disaster recovery into a target zone.
+
+    1. No network with deployment name in target zone
+    2. No blob/dbdata volumes in target zone
+    3. Snapshots must exist in target zone
+
+    Returns the snapshot dict for use in disk creation.
+    """
+    print("\nRunning recovery pre-flight checks...")
+
+    # Check no existing network
+    if find_network(network_name, zone_id):
+        raise RuntimeError(
+            f"Cannot recover: network '{network_name}' already exists in "
+            f"target zone. Teardown the existing deployment first.")
+
+    # Check no existing volumes
+    blob_name = f"{network_name}-blob"
+    if find_volume(blob_name, zone_id):
+        raise RuntimeError(
+            f"Cannot recover: volume '{blob_name}' already exists in "
+            f"target zone. Teardown the existing deployment first.")
+    if db_enabled:
+        dbdata_name = f"{network_name}-dbdata"
+        if find_volume(dbdata_name, zone_id):
+            raise RuntimeError(
+                f"Cannot recover: volume '{dbdata_name}' already exists in "
+                f"target zone. Teardown the existing deployment first.")
+
+    # Find snapshots
+    snapshots = find_latest_snapshots(network_name, zone_id, db_enabled)
+    if "blob" not in snapshots:
+        raise RuntimeError(
+            f"Cannot recover: no blob snapshot found for '{network_name}' "
+            f"in target zone. Ensure snapshots have been replicated.")
+    if db_enabled and "dbdata" not in snapshots:
+        raise RuntimeError(
+            f"Cannot recover: no dbdata snapshot found for '{network_name}' "
+            f"in target zone. Ensure snapshots have been replicated.")
+
+    print(f"  Blob snapshot: {snapshots['blob']['id']} "
+          f"(created {snapshots['blob']['created']})")
+    if db_enabled and "dbdata" in snapshots:
+        print(f"  DB snapshot:   {snapshots['dbdata']['id']} "
+              f"(created {snapshots['dbdata']['created']})")
+    print("  Pre-flight checks passed.\n")
+
+    return snapshots
+
+
+def create_disk_from_snapshot(disk_name, snapshot_id, vm_id, network_name,
+                              desc):
+    """Create a volume from a snapshot, tag it, and attach to VM."""
+    data = cmk("create", "volume",
+               f"name={disk_name}",
+               f"snapshotid={snapshot_id}")
+    vol_id = data["volume"]["id"]
+    print(f"  {desc}: created from snapshot ({vol_id})")
+    cmk("create", "tags",
+        f"resourceids={vol_id}",
+        "resourcetype=Volume",
+        "tags[0].key=locaweb-ai-deploy-id",
+        f"tags[0].value={network_name}")
+    print(f"    Tagged with locaweb-ai-deploy-id={network_name}")
+    cmk("attach", "volume", f"id={vol_id}",
+        f"virtualmachineid={vm_id}")
+    print(f"    Attached to VM")
+    return vol_id
+
+
 def find_public_ip_for_vm(network_id, vm_id):
     """Find the public IP with static NAT pointing to a specific VM."""
     data = cmk_quiet("list", "publicipaddresses",
@@ -405,7 +527,7 @@ def get_vm_internal_ip(vm_id):
 # Main provisioning logic
 # ---------------------------------------------------------------------------
 
-def provision(config, repo_name, unique_id, public_key):
+def provision(config, repo_name, unique_id, public_key, recover=False):
     """Provision all infrastructure based on the validated config."""
     zone_name = config["zone"]
     web_plan = config["web_plan"]
@@ -429,6 +551,8 @@ def provision(config, repo_name, unique_id, public_key):
 
     print(f"\n{'='*60}")
     print(f"Provisioning: {network_name}")
+    if recover:
+        print(f"Mode: DISASTER RECOVERY (from snapshots)")
     print(f"Zone: {zone_name}")
     print(f"Web: {web_plan} | Blob disk: {blob_disk_size_gb}GB")
     if workers_enabled:
@@ -458,9 +582,15 @@ def provision(config, repo_name, unique_id, public_key):
 
     print("  All names resolved.\n")
 
+    # --- Recovery pre-flight ---
+    recovery_snapshots = None
+    if recover:
+        recovery_snapshots = recovery_preflight(network_name, zone_id,
+                                                db_enabled)
+
     # --- Network ---
     print("Creating isolated network...")
-    net_id = find_network(network_name)
+    net_id = find_network(network_name, zone_id)
     if net_id:
         print(f"  Already exists: {net_id}")
     else:
@@ -627,18 +757,32 @@ def provision(config, repo_name, unique_id, public_key):
             print(f"  {desc} ({start}-{end}): created")
 
     # --- Data Disks ---
-    print("\nCreating data disks...")
-    blob_vol_id = create_disk(blob_disk_name, disk_offering_id, zone_id,
-                              blob_disk_size_gb, web_vm_id,
-                              network_name, "Blob disk (web)")
-    results["blob_volume_id"] = blob_vol_id
+    if recover:
+        print("\nRecovering data disks from snapshots...")
+        blob_vol_id = create_disk_from_snapshot(
+            blob_disk_name, recovery_snapshots["blob"]["id"],
+            web_vm_id, network_name, "Blob disk (web)")
+        results["blob_volume_id"] = blob_vol_id
 
-    if db_enabled:
-        db_disk_name = f"{network_name}-dbdata"
-        db_vol_id = create_disk(db_disk_name, disk_offering_id, zone_id,
-                                config["db_disk_size_gb"], db_vm_id,
-                                network_name, "DB disk (db)")
-        results["db_volume_id"] = db_vol_id
+        if db_enabled:
+            db_disk_name = f"{network_name}-dbdata"
+            db_vol_id = create_disk_from_snapshot(
+                db_disk_name, recovery_snapshots["dbdata"]["id"],
+                db_vm_id, network_name, "DB disk (db)")
+            results["db_volume_id"] = db_vol_id
+    else:
+        print("\nCreating data disks...")
+        blob_vol_id = create_disk(blob_disk_name, disk_offering_id, zone_id,
+                                  blob_disk_size_gb, web_vm_id,
+                                  network_name, "Blob disk (web)")
+        results["blob_volume_id"] = blob_vol_id
+
+        if db_enabled:
+            db_disk_name = f"{network_name}-dbdata"
+            db_vol_id = create_disk(db_disk_name, disk_offering_id, zone_id,
+                                    config["db_disk_size_gb"], db_vm_id,
+                                    network_name, "DB disk (db)")
+            results["db_volume_id"] = db_vol_id
 
     # --- Snapshot Policies ---
     print("\nCreating snapshot policies...")
@@ -696,6 +840,8 @@ def main():
                         help="Path to SSH public key file")
     parser.add_argument("--output", default=None,
                         help="Path to write JSON output (default: stdout)")
+    parser.add_argument("--recover", action="store_true",
+                        help="Recover from snapshots (disaster recovery)")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -706,7 +852,8 @@ def main():
 
     try:
         results = provision(config, repo_name=args.repo_name,
-                            unique_id=args.unique_id, public_key=public_key)
+                            unique_id=args.unique_id, public_key=public_key,
+                            recover=args.recover)
         if args.output:
             with open(args.output, "w") as f:
                 json.dump(results, f, indent=2)
