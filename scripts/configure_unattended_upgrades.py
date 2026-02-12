@@ -74,6 +74,12 @@ def configure_vm(ip, key_path, automatic_reboot, reboot_time):
     """Apply unattended-upgrades configuration to a single VM."""
     print(f"  Configuring {ip}...")
 
+    # Ensure the VM uses UTC so scheduled times are interpreted correctly
+    rc, _, stderr = ssh_run(ip, "timedatectl set-timezone Etc/UTC", key_path)
+    if rc != 0:
+        print(f"    [WARN] Failed to set timezone to UTC on {ip}: {stderr}")
+        return False
+
     # Always write the auto-upgrades config
     rc, _, stderr = ssh_run(
         ip,

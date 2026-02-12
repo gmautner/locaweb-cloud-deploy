@@ -35,9 +35,9 @@ import time
 NETWORK_OFFERING_NAME = "Default Guest Network"
 DISK_OFFERING_NAME = "data.disk.general"
 TEMPLATE_REGEX = re.compile(r"^Ubuntu.*24.*$")
-SNAPSHOT_SCHEDULE = "00:03"
+SNAPSHOT_SCHEDULE = "00:06"
 SNAPSHOT_MAX = 3
-SNAPSHOT_TIMEZONE = "America/Sao_Paulo"
+SNAPSHOT_TIMEZONE = "Etc/UTC"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_USERDATA = os.path.join(SCRIPT_DIR, "userdata", "web_vm.sh")
