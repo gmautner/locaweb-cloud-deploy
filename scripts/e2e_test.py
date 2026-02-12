@@ -7,21 +7,26 @@ downloads the provision-output artifact, then verifies the deployed
 application works correctly (HTTP, SSH, disk mounts, env vars).
 
 Environment variables:
-  GH_TOKEN      - GitHub token for gh CLI auth
-  REPO_FULL     - Full repository path (owner/name)
-  REPO_NAME     - Repository name
-  REPO_ID       - Repository ID (used for resource naming)
-  ZONE          - CloudStack zone (ZP01/ZP02)
-  SCENARIO      - Test scenario (complete/web-only/scale-up/scale-down/all)
-  SSH_KEY_PATH  - Path to SSH private key
+  GH_TOKEN                       - GitHub token for gh CLI auth
+  REPO_FULL                      - Full repository path (owner/name)
+  REPO_NAME                      - Repository name
+  REPO_ID                        - Repository ID (used for resource naming)
+  ZONE                           - CloudStack zone (ZP01/ZP02)
+  SCENARIO                       - Test scenario (complete/web-only/scale-up/scale-down/all)
+  SSH_KEY_PATH                   - Path to SSH private key
+  ROUTE_53_AWS_ACCESS_KEY_ID     - AWS access key for Route53 DNS management
+  ROUTE_53_AWS_SECRET_ACCESS_KEY - AWS secret key for Route53 DNS management
+  ROUTE_53_HOSTED_ZONE_ID        - Route53 hosted zone ID for kamal.giba.tech
 """
+import datetime
 import json
 import os
+import ssl
 import subprocess
 import sys
 import time
 import traceback
-from http.client import HTTPConnection
+from http.client import HTTPConnection, HTTPSConnection
 from urllib.parse import urlencode
 
 # ---------------------------------------------------------------------------
@@ -44,6 +49,84 @@ TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown_infrastructure.py")
 WORKFLOW_POLL_INTERVAL = 15  # seconds between polls for new run
 WORKFLOW_POLL_TIMEOUT = 120  # seconds to wait for new run to appear
 WORKFLOW_WATCH_TIMEOUT = 2400  # 40 minutes max for a deploy workflow
+
+
+# Route53 DNS settings
+ROUTE_53_AWS_ACCESS_KEY_ID = os.environ.get("ROUTE_53_AWS_ACCESS_KEY_ID", "")
+ROUTE_53_AWS_SECRET_ACCESS_KEY = os.environ.get("ROUTE_53_AWS_SECRET_ACCESS_KEY", "")
+ROUTE_53_HOSTED_ZONE_ID = os.environ.get("ROUTE_53_HOSTED_ZONE_ID", "")
+DNS_DOMAIN_SUFFIX = "kamal.giba.tech"
+
+
+# ---------------------------------------------------------------------------
+# Route53 DNS helper
+# ---------------------------------------------------------------------------
+
+def route53_upsert_a_record(domain, ip):
+    """Create or update a Route53 A record. Returns True on success."""
+    print(f"  Creating Route53 A record: {domain} -> {ip}")
+    change_batch = json.dumps({
+        "Changes": [{
+            "Action": "UPSERT",
+            "ResourceRecordSet": {
+                "Name": domain,
+                "Type": "A",
+                "TTL": 60,
+                "ResourceRecords": [{"Value": ip}],
+            },
+        }],
+    })
+    cmd = [
+        "aws", "route53", "change-resource-record-sets",
+        "--hosted-zone-id", ROUTE_53_HOSTED_ZONE_ID,
+        "--change-batch", change_batch,
+    ]
+    env = os.environ.copy()
+    env["AWS_ACCESS_KEY_ID"] = ROUTE_53_AWS_ACCESS_KEY_ID
+    env["AWS_SECRET_ACCESS_KEY"] = ROUTE_53_AWS_SECRET_ACCESS_KEY
+    env["AWS_SESSION_TOKEN"] = ""
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(f"  Route53 UPSERT failed: {result.stderr}")
+        return False
+    print(f"  Route53 A record created: {domain} -> {ip}")
+    return True
+
+
+def route53_delete_a_record(domain, ip):
+    """Delete a Route53 A record. Non-fatal on failure."""
+    print(f"  Deleting Route53 A record: {domain}")
+    change_batch = json.dumps({
+        "Changes": [{
+            "Action": "DELETE",
+            "ResourceRecordSet": {
+                "Name": domain,
+                "Type": "A",
+                "TTL": 60,
+                "ResourceRecords": [{"Value": ip}],
+            },
+        }],
+    })
+    cmd = [
+        "aws", "route53", "change-resource-record-sets",
+        "--hosted-zone-id", ROUTE_53_HOSTED_ZONE_ID,
+        "--change-batch", change_batch,
+    ]
+    env = os.environ.copy()
+    env["AWS_ACCESS_KEY_ID"] = ROUTE_53_AWS_ACCESS_KEY_ID
+    env["AWS_SECRET_ACCESS_KEY"] = ROUTE_53_AWS_SECRET_ACCESS_KEY
+    env["AWS_SESSION_TOKEN"] = ""
+    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+    if result.returncode != 0:
+        print(f"  Warning: Route53 DELETE failed: {result.stderr}")
+    else:
+        print(f"  Route53 A record deleted: {domain}")
+
+
+def generate_test_domain():
+    """Generate a timestamped test domain under kamal.giba.tech."""
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"test-{ts}.{DNS_DOMAIN_SUFFIX}"
 
 
 # ---------------------------------------------------------------------------
@@ -307,16 +390,29 @@ class SSHVerifier:
 # ---------------------------------------------------------------------------
 
 class HTTPVerifier:
-    """HTTP request verification against the deployed application."""
+    """HTTP request verification against the deployed application.
 
-    def __init__(self, ip):
+    When domain is provided, uses HTTPS with certificate verification.
+    Otherwise, uses plain HTTP with nip.io Host header.
+    """
+
+    def __init__(self, ip, domain=None):
         self.ip = ip
-        self.host = f"{ip}.nip.io"
+        self.domain = domain
+        self.host = domain if domain else f"{ip}.nip.io"
+        self.use_https = bool(domain)
+
+    def _connect(self, timeout=10):
+        """Create an HTTP(S) connection."""
+        if self.use_https:
+            ctx = ssl.create_default_context()
+            return HTTPSConnection(self.domain, 443, timeout=timeout, context=ctx)
+        return HTTPConnection(self.ip, 80, timeout=timeout)
 
     def get(self, path="/", timeout=10):
-        """HTTP GET with Host header. Returns (status_code, body)."""
+        """HTTP(S) GET. Returns (status_code, body)."""
         try:
-            conn = HTTPConnection(self.ip, 80, timeout=timeout)
+            conn = self._connect(timeout)
             conn.request("GET", path, headers={"Host": self.host})
             resp = conn.getresponse()
             body = resp.read().decode("utf-8", errors="replace")
@@ -327,10 +423,10 @@ class HTTPVerifier:
             return 0, str(e)
 
     def post_form(self, path, data, timeout=10):
-        """HTTP POST with form-encoded data. Returns (status_code, body)."""
+        """HTTP(S) POST with form-encoded data. Returns (status_code, body)."""
         try:
             encoded = urlencode(data)
-            conn = HTTPConnection(self.ip, 80, timeout=timeout)
+            conn = self._connect(timeout)
             conn.request("POST", path,
                          body=encoded,
                          headers={
@@ -346,7 +442,7 @@ class HTTPVerifier:
             return 0, str(e)
 
     def post_multipart(self, path, filename, content, timeout=10):
-        """HTTP POST multipart file upload. Returns (status_code, body)."""
+        """HTTP(S) POST multipart file upload. Returns (status_code, body)."""
         boundary = "----E2ETestBoundary"
         body_parts = [
             f"--{boundary}",
@@ -359,7 +455,7 @@ class HTTPVerifier:
         ]
         body = "\r\n".join(body_parts)
         try:
-            conn = HTTPConnection(self.ip, 80, timeout=timeout)
+            conn = self._connect(timeout)
             conn.request("POST", path,
                          body=body.encode("utf-8"),
                          headers={
@@ -386,6 +482,21 @@ class HTTPVerifier:
             time.sleep(10)
         print(f"    Health check timed out (last status: {last_status})")
         return False
+
+    def get_certificate_info(self):
+        """Get the TLS certificate info from the server. Returns dict or None."""
+        try:
+            ctx = ssl.create_default_context()
+            conn = ctx.wrap_socket(
+                __import__('socket').create_connection((self.domain, 443), timeout=10),
+                server_hostname=self.domain,
+            )
+            cert = conn.getpeercert()
+            conn.close()
+            return cert
+        except Exception as e:
+            print(f"    Certificate check failed: {e}")
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -663,15 +774,19 @@ class E2ETestRunner:
     # ------------------------------------------------------------------
 
     def _scenario_web_only(self):
-        s = TestScenario("Web-Only Deploy")
+        s = TestScenario("Web-Only Deploy (custom domain + SSL)")
+        domain = generate_test_domain()
+        domain_ip = None
         with s:
-            # Deploy with defaults (no workers, no db), reboot disabled
+            # Deploy with custom domain (no workers, no db), reboot disabled
             output = trigger_deploy({
                 "zone": ZONE,
+                "domain": domain,
                 "automatic_reboot": "false",
             })
 
             web_ip = output.get("web_ip", "")
+            domain_ip = web_ip  # save for cleanup
             s.assert_true(web_ip, "Deploy produced web_ip")
             s.assert_true("worker_ips" not in output or output["worker_ips"] == [],
                           "No worker IPs in output")
@@ -682,25 +797,34 @@ class E2ETestRunner:
                 self.scenarios.append(s)
                 return
 
-            # HTTP: Health check
-            http = HTTPVerifier(web_ip)
+            # Create Route53 A record pointing domain to web IP
+            s.assert_true(
+                route53_upsert_a_record(domain, web_ip),
+                f"Route53 A record created: {domain} -> {web_ip}")
+
+            # Wait for DNS propagation (short TTL=60, but give it a moment)
+            print(f"  Waiting 15s for DNS propagation...")
+            time.sleep(15)
+
+            # HTTPS: Health check via domain
+            http = HTTPVerifier(web_ip, domain=domain)
             s.assert_true(
                 http.wait_for_healthy("/up", timeout=300),
-                "HTTP /up returns 200 (no DB mode)")
+                "HTTPS /up returns 200 (no DB mode)")
 
-            # HTTP: Index page
+            # HTTPS: Index page
             status, body = http.get("/")
-            s.assert_equal(status, 200, "HTTP GET / returns 200")
+            s.assert_equal(status, 200, "HTTPS GET / returns 200")
 
-            # HTTP: Shows "Database not configured"
+            # HTTPS: Shows "Database not configured"
             s.assert_contains(body, "Database not configured",
                               "Page shows 'Database not configured'")
 
-            # HTTP: Env vars still visible
+            # HTTPS: Env vars still visible
             s.assert_not_contains(body, "not set",
                                   "Env vars are set (no 'not set' on page)")
 
-            # HTTP: Upload still works
+            # HTTPS: Upload still works
             test_filename = f"e2e-webonly-{int(time.time())}.txt"
             status, _ = http.post_multipart(
                 "/upload", test_filename, "web-only test")
@@ -710,6 +834,23 @@ class E2ETestRunner:
             status, body = http.get("/")
             s.assert_contains(body, test_filename,
                               "Uploaded file appears on page")
+
+            # TLS: Verify certificate is valid and issued for the domain
+            cert = http.get_certificate_info()
+            s.assert_true(cert is not None,
+                          "TLS certificate retrieved successfully")
+            if cert:
+                # Check subject matches domain
+                san = cert.get("subjectAltName", [])
+                san_names = [v for t, v in san if t == "DNS"]
+                s.assert_true(
+                    domain in san_names,
+                    f"Certificate SAN contains {domain}")
+                # Check issuer is Let's Encrypt
+                issuer = dict(x[0] for x in cert.get("issuer", []))
+                s.assert_equal(
+                    issuer.get("organizationName", ""), "Let's Encrypt",
+                    "Certificate issued by Let's Encrypt")
 
             # SSH: Web VM - blob mount
             s.assert_true(
@@ -729,6 +870,10 @@ class E2ETestRunner:
 
             # Teardown
             trigger_teardown()
+
+        # Clean up DNS record (outside the with block so it runs even on failure)
+        if domain_ip:
+            route53_delete_a_record(domain, domain_ip)
 
         self.scenarios.append(s)
 

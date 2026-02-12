@@ -6,11 +6,13 @@
 # Uses its own concurrency group to avoid deadlocking with deploy/teardown.
 #
 # Required GitHub Secrets:
-#   CLOUDSTACK_API_KEY    - CloudStack API key
-#   CLOUDSTACK_SECRET_KEY - CloudStack secret key
-#   SSH_PRIVATE_KEY       - SSH private key for VM access
-#   POSTGRES_USER         - PostgreSQL username (for DB scenarios)
-#   POSTGRES_PASSWORD     - PostgreSQL password (for DB scenarios)
+#   CLOUDSTACK_API_KEY              - CloudStack API key
+#   CLOUDSTACK_SECRET_KEY           - CloudStack secret key
+#   SSH_PRIVATE_KEY                 - SSH private key for VM access
+#   POSTGRES_USER                   - PostgreSQL username (for DB scenarios)
+#   POSTGRES_PASSWORD               - PostgreSQL password (for DB scenarios)
+#   ROUTE_53_AWS_ACCESS_KEY_ID      - AWS access key for Route53 DNS management
+#   ROUTE_53_AWS_SECRET_ACCESS_KEY  - AWS secret key for Route53 DNS management
 #
 # Required GitHub Variables/Secrets with KAMAL_ prefix:
 #   KAMAL_MY_VAR (variable) - becomes MY_VAR in container
@@ -96,6 +98,9 @@ jobs:
           ZONE: ${{ inputs.zone || 'ZP01' }}
           SCENARIO: ${{ inputs.scenario || 'all' }}
           SSH_KEY_PATH: /tmp/ssh_key
+          ROUTE_53_AWS_ACCESS_KEY_ID: ${{ secrets.ROUTE_53_AWS_ACCESS_KEY_ID }}
+          ROUTE_53_AWS_SECRET_ACCESS_KEY: ${{ secrets.ROUTE_53_AWS_SECRET_ACCESS_KEY }}
+          ROUTE_53_HOSTED_ZONE_ID: Z072276018YSENDXRW02H
         run: |
           python3 -u scripts/e2e_test.py
 
