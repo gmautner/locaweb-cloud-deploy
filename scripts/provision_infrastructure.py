@@ -41,6 +41,7 @@ SNAPSHOT_TIMEZONE = "Etc/UTC"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 WEB_USERDATA = os.path.join(SCRIPT_DIR, "userdata", "web_vm.sh")
+WORKER_USERDATA = os.path.join(SCRIPT_DIR, "userdata", "worker_vm.sh")
 DB_USERDATA = os.path.join(SCRIPT_DIR, "userdata", "db_vm.sh")
 
 # ---------------------------------------------------------------------------
@@ -628,7 +629,8 @@ def provision(config, repo_name, unique_id, public_key, recover=False):
         for i in range(1, num_workers + 1):
             worker_name = f"{network_name}-worker-{i}"
             wid = deploy_vm(worker_name, worker_offering_id, template_id,
-                            zone_id, net_id, keypair_name)
+                            zone_id, net_id, keypair_name,
+                            userdata_path=WORKER_USERDATA)
             worker_vm_ids.append(wid)
         results["worker_vm_ids"] = worker_vm_ids
 

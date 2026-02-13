@@ -90,6 +90,7 @@ Users of the workflow (whether human or agent) should not need to interact direc
 |----|-------------|
 | FR-21 | The web VM cloud-init script shall format and mount the blob storage disk at the designated path. |
 | FR-22 | The database VM cloud-init script shall format and mount the data disk at the designated path. |
+| FR-39 | All VM cloud-init scripts (web, worker, DB) shall install and configure fail2ban to block SSH brute-force attempts (3 retries, 1-hour ban, aggressive mode). |
 
 ### 4.4 Teardown
 
@@ -279,8 +280,9 @@ locaweb-ai-deploy/
 |   |-- generate_kamal_config.py        Generate Kamal deploy config
 |   |-- create_kamal_secrets.py         Create Kamal secrets + KAMAL_ prefix processing
 |   `-- userdata/
-|       |-- web_vm.sh                   Cloud-init: format/mount blob disk
-|       `-- db_vm.sh                    Cloud-init: format/mount data disk
+|       |-- web_vm.sh                   Cloud-init: fail2ban + format/mount blob disk
+|       |-- worker_vm.sh                Cloud-init: fail2ban
+|       `-- db_vm.sh                    Cloud-init: fail2ban + format/mount data disk
 `-- docs/
     |-- PRD.md                          This document
     |-- architecture.md                 Architecture design document

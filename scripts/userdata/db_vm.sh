@@ -1,8 +1,23 @@
 #!/bin/bash
 # Userdata script for Database VM
-# Waits for attached data disk and formats/mounts it.
+# Installs fail2ban and waits for attached data disk and formats/mounts it.
 # Docker is installed automatically by Kamal on first deploy.
 set -euo pipefail
+
+# --- fail2ban: block SSH brute-force attempts ---
+apt-get update -qq
+apt-get install -y -qq fail2ban
+cat > /etc/fail2ban/jail.local << 'F2BEOF'
+[DEFAULT]
+bantime = 3600
+findtime = 600
+maxretry = 3
+
+[sshd]
+enabled = true
+mode = aggressive
+F2BEOF
+systemctl restart fail2ban
 
 DEVICE="/dev/vdb"
 MOUNT_POINT="/data/db"

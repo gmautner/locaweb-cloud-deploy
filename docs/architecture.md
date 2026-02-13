@@ -237,7 +237,7 @@ A Python script that uses the CloudMonkey CLI (`cmk`) to interact with the Cloud
 - **Retry with exponential backoff**: All `cmk` calls retry up to 5 times with exponential backoff (2, 4, 8, 16, 32 seconds) to handle transient CloudStack API errors. Final failures raise `RuntimeError`.
 - **Worker scale-down**: After deploying the desired number of workers, the script probes for excess workers (worker-N+1, worker-N+2, ...) and destroys them along with their associated public IPs, firewall rules, and static NAT mappings.
 - **Static NAT conflict avoidance**: When assigning public IPs, the script first checks for existing static NAT mappings per VM. It reuses existing assignments and only acquires new IPs for VMs that lack one. This prevents CloudStack's "VM already has a static NAT IP" error during scale-up scenarios.
-- **Userdata injection**: Web and DB VMs receive base64-encoded cloud-init scripts that format and mount their data disks.
+- **Userdata injection**: All VMs receive base64-encoded cloud-init scripts. Web and DB scripts format and mount their data disks. All scripts (web, worker, DB) install and configure fail2ban for SSH brute-force protection.
 - **Volume tagging**: Data disks are tagged with `locaweb-ai-deploy-id={network-name}` to enable the teardown script to find them reliably.
 - **Disaster recovery**: When `--recover` is passed, the script creates data volumes from the latest available snapshots (MANUAL or RECURRING, in BackedUp state) in the target zone instead of blank disks. Pre-flight checks verify no conflicting deployment exists and required snapshots are available. Snapshot policies are still created on recovered volumes for ongoing protection.
 - **Template discovery**: Automatically selects the most recent Ubuntu 24.x template matching the regex `^Ubuntu.*24.*$`.
@@ -410,16 +410,17 @@ A Flask web application that exercises all platform features:
 
 ### 7. VM Userdata Scripts
 
-**Files:** `scripts/userdata/web_vm.sh`, `scripts/userdata/db_vm.sh`
+**Files:** `scripts/userdata/web_vm.sh`, `scripts/userdata/worker_vm.sh`, `scripts/userdata/db_vm.sh`
 
-Cloud-init userdata scripts executed on first boot. Both follow the same pattern:
+Cloud-init userdata scripts executed on first boot. All three scripts install and configure fail2ban for SSH brute-force protection (3 retries, 1-hour ban, aggressive mode). The web and DB scripts additionally format and mount their data disks:
 
-1. Wait up to 300 seconds for the data disk device (`/dev/vdb`) to appear.
-2. Format as ext4 if no filesystem exists (preserves data on re-attach).
-3. Create the mount point and mount the device.
-4. Add an fstab entry with `nofail` for persistence across reboots.
+1. Install fail2ban and write `/etc/fail2ban/jail.local` with hardened settings.
+2. (Web and DB only) Wait up to 300 seconds for the data disk device (`/dev/vdb`) to appear.
+3. (Web and DB only) Format as ext4 if no filesystem exists (preserves data on re-attach).
+4. (Web and DB only) Create the mount point and mount the device.
+5. (Web and DB only) Add an fstab entry with `nofail` for persistence across reboots.
 
-The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`.
+The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker script handles fail2ban only (workers are stateless with no data disks).
 
 ---
 
@@ -625,7 +626,7 @@ workflow_dispatch -> CloudMonkey -> CloudStack API
 
 ### Identified security considerations
 
-- Firewall rules use `0.0.0.0/0` source CIDR, meaning SSH is open to the internet on all VMs. IP filtering to GitHub Actions runner ranges is a near-term TODO.
+- Firewall rules use `0.0.0.0/0` source CIDR, meaning SSH is open to the internet on all VMs. IP filtering to GitHub Actions runner ranges is a near-term TODO. fail2ban is installed on all VMs to mitigate brute-force attacks (3 retries, 1-hour ban, aggressive mode).
 - The database VM's SSH port is exposed publicly, though PostgreSQL's port (5432) is not.
 - TLS via Let's Encrypt is available when a custom domain is configured. Without a domain, traffic is unencrypted HTTP over nip.io.
 - Worker VMs have public IPs with SSH access, even though they may not require external connectivity.

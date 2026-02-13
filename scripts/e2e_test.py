@@ -372,6 +372,27 @@ class SSHVerifier:
             ip, "test ! -f /etc/apt/apt.conf.d/52-automatic-reboots")
         return rc == 0
 
+    def verify_fail2ban(self, ip):
+        """Check that fail2ban is running with the expected sshd jail settings.
+
+        Returns a dict with keys: active, bantime, findtime, maxretry.
+        Values are None on failure.
+        """
+        result = {"active": False, "bantime": None, "findtime": None,
+                  "maxretry": None}
+        # Check sshd jail is active
+        rc, stdout, _ = self.run_command(ip, "fail2ban-client status sshd")
+        if rc != 0:
+            return result
+        result["active"] = True
+        # Read effective settings
+        for setting in ("bantime", "findtime", "maxretry"):
+            rc, stdout, _ = self.run_command(
+                ip, f"fail2ban-client get sshd {setting}")
+            if rc == 0 and stdout.strip().lstrip('-').isdigit():
+                result[setting] = int(stdout.strip())
+        return result
+
 
 # ---------------------------------------------------------------------------
 # HTTP Verifier
@@ -752,6 +773,19 @@ class E2ETestRunner:
                         self.ssh.verify_automatic_reboot(ip, "03:30"),
                         f"Automatic reboot at 03:30 on {label}")
 
+            # fail2ban: all VMs should have sshd jail with hardened settings
+            for label, ip in all_ips:
+                if ip:
+                    f2b = self.ssh.verify_fail2ban(ip)
+                    s.assert_true(f2b["active"],
+                                  f"fail2ban sshd jail active on {label}")
+                    s.assert_equal(f2b["maxretry"], 3,
+                                   f"fail2ban maxretry=3 on {label}")
+                    s.assert_equal(f2b["bantime"], 3600,
+                                   f"fail2ban bantime=3600 on {label}")
+                    s.assert_equal(f2b["findtime"], 600,
+                                   f"fail2ban findtime=600 on {label}")
+
             # Teardown
             trigger_teardown()
 
@@ -855,6 +889,17 @@ class E2ETestRunner:
             s.assert_true(
                 self.ssh.verify_no_automatic_reboot(web_ip),
                 "No automatic reboot file on web (reboot disabled)")
+
+            # fail2ban: web VM should have sshd jail with hardened settings
+            f2b = self.ssh.verify_fail2ban(web_ip)
+            s.assert_true(f2b["active"],
+                          "fail2ban sshd jail active on web")
+            s.assert_equal(f2b["maxretry"], 3,
+                           "fail2ban maxretry=3 on web")
+            s.assert_equal(f2b["bantime"], 3600,
+                           "fail2ban bantime=3600 on web")
+            s.assert_equal(f2b["findtime"], 600,
+                           "fail2ban findtime=600 on web")
 
             # Teardown
             trigger_teardown()
