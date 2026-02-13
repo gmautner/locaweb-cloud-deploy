@@ -71,7 +71,8 @@ jobs:
           NETWORK_NAME="${{ github.event.repository.name }}-${{ github.run_id }}"
           echo "Emergency teardown for: $NETWORK_NAME"
           python3 -u scripts/teardown_infrastructure.py \
-            --network-name "$NETWORK_NAME" || true
+            --network-name "$NETWORK_NAME" \
+            --zone "${{ inputs.zone || 'ZP01' }}" || true
 
       - name: Test summary
         if: always()

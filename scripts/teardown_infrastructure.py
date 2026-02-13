@@ -16,6 +16,10 @@ Destruction order (reverse of creation):
 8. Delete SSH key pair
 
 Usage:
+    # Tear down a specific zone:
+    python3 scripts/teardown_infrastructure.py --network-name my-app-123456789 --zone ZP01
+
+    # Tear down all zones (all networks matching the name):
     python3 scripts/teardown_infrastructure.py --network-name my-app-123456789
 """
 import argparse
@@ -53,98 +57,128 @@ def cmk(*args):
             return None
 
 
-def teardown(network_name):
-    """Destroy all resources for a project."""
+def resolve_zone(zone_name):
+    """Resolve zone name to ID."""
+    data = cmk("list", "zones", f"name={zone_name}", "filter=id,name")
+    if data:
+        for z in data.get("zone", []):
+            if z["name"] == zone_name:
+                return z["id"]
+    raise RuntimeError(f"Zone '{zone_name}' not found")
+
+
+def teardown(network_name, zone_id=None):
+    """Destroy all resources for a project in one network instance.
+
+    When zone_id is provided, only the network in that zone is targeted.
+    When zone_id is None, all networks matching the name are torn down.
+    """
     keypair_name = f"{network_name}-key"
 
-    print(f"\n{'='*60}")
-    print(f"Tearing down: {network_name}")
-    print(f"{'='*60}\n")
+    # Find matching network(s)
+    list_args = ["list", "networks", "filter=id,name,zoneid"]
+    if zone_id:
+        list_args.append(f"zoneid={zone_id}")
+    data = cmk(*list_args)
 
-    # Find the network
-    data = cmk("list", "networks", "filter=id,name")
-    net_id = None
+    matching_networks = []
     if data:
         for n in data.get("network", []):
             if n["name"] == network_name:
-                net_id = n["id"]
-                break
-    if not net_id:
-        print(f"  Network '{network_name}' not found. Nothing to tear down.")
+                matching_networks.append(n)
+
+    if not matching_networks:
+        zone_hint = f" in zone {zone_id}" if zone_id else ""
+        print(f"  Network '{network_name}' not found{zone_hint}. Nothing to tear down.")
+        # Still try to delete the keypair (it's zone-independent)
+        print("[8/8] Deleting SSH key pair...")
+        cmk("delete", "sshkeypair", f"name={keypair_name}")
+        print(f"  Deleted {keypair_name}")
         return
 
-    # Find all VMs in this network
-    data = cmk("list", "virtualmachines", f"networkid={net_id}",
-               "filter=id,name,state")
-    vms = data.get("virtualmachine", []) if data else []
+    for net in matching_networks:
+        net_id = net["id"]
+        net_zone_id = net.get("zoneid", "unknown")
 
-    # 1. Delete snapshot policies for data volumes
-    print("[1/8] Removing snapshot policies...")
-    data = cmk("list", "volumes", "type=DATADISK",
-               "tags[0].key=locaweb-ai-deploy-id",
-               f"tags[0].value={network_name}",
-               "filter=id,name")
-    volumes = data.get("volume", []) if data else []
-    for vol in volumes:
-        policies = cmk("list", "snapshotpolicies", f"volumeid={vol['id']}")
-        if policies and policies.get("snapshotpolicy"):
-            for p in policies["snapshotpolicy"]:
-                cmk("delete", "snapshotpolicies", f"id={p['id']}")
-                print(f"  Deleted snapshot policy for {vol['name']}")
+        print(f"\n{'='*60}")
+        print(f"Tearing down: {network_name} (network={net_id}, zone={net_zone_id})")
+        print(f"{'='*60}\n")
 
-    # 2. Detach and delete data volumes
-    print("[2/8] Detaching and deleting data volumes...")
-    for vol in volumes:
-        cmk("detach", "volume", f"id={vol['id']}")
-        print(f"  Detached {vol['name']}")
-        time.sleep(2)
-        cmk("delete", "volume", f"id={vol['id']}")
-        print(f"  Deleted {vol['name']}")
+        # Find all VMs in this network
+        data = cmk("list", "virtualmachines", f"networkid={net_id}",
+                    "filter=id,name,state")
+        vms = data.get("virtualmachine", []) if data else []
 
-    # 3. Disable static NAT
-    print("[3/8] Disabling static NAT...")
-    ip_data = cmk("list", "publicipaddresses",
-                  f"associatednetworkid={net_id}",
-                  "filter=id,ipaddress,issourcenat,isstaticnat")
-    ips = []
-    if ip_data:
-        for ip in ip_data.get("publicipaddress", []):
-            if not ip.get("issourcenat", False):
-                ips.append(ip)
-    for ip in ips:
-        if ip.get("isstaticnat", False):
-            cmk("disable", "staticnat", f"ipaddressid={ip['id']}")
-            print(f"  Disabled static NAT on {ip['ipaddress']}")
+        # 1. Delete snapshot policies for data volumes
+        print("[1/8] Removing snapshot policies...")
+        vol_args = ["list", "volumes", "type=DATADISK",
+                    "tags[0].key=locaweb-ai-deploy-id",
+                    f"tags[0].value={network_name}",
+                    "filter=id,name"]
+        if zone_id:
+            vol_args.append(f"zoneid={zone_id}")
+        data = cmk(*vol_args)
+        volumes = data.get("volume", []) if data else []
+        for vol in volumes:
+            policies = cmk("list", "snapshotpolicies", f"volumeid={vol['id']}")
+            if policies and policies.get("snapshotpolicy"):
+                for p in policies["snapshotpolicy"]:
+                    cmk("delete", "snapshotpolicies", f"id={p['id']}")
+                    print(f"  Deleted snapshot policy for {vol['name']}")
 
-    # 4. Delete firewall rules
-    print("[4/8] Deleting firewall rules...")
-    for ip in ips:
-        rules = cmk("list", "firewallrules", f"ipaddressid={ip['id']}",
-                     "filter=id,startport,endport")
-        if rules:
-            for r in rules.get("firewallrule", []):
-                cmk("delete", "firewallrule", f"id={r['id']}")
-                print(f"  Deleted FW rule {r.get('startport')}-{r.get('endport')} on {ip['ipaddress']}")
+        # 2. Detach and delete data volumes
+        print("[2/8] Detaching and deleting data volumes...")
+        for vol in volumes:
+            cmk("detach", "volume", f"id={vol['id']}")
+            print(f"  Detached {vol['name']}")
+            time.sleep(2)
+            cmk("delete", "volume", f"id={vol['id']}")
+            print(f"  Deleted {vol['name']}")
 
-    # 5. Release public IPs
-    print("[5/8] Releasing public IPs...")
-    for ip in ips:
-        cmk("disassociate", "ipaddress", f"id={ip['id']}")
-        print(f"  Released {ip['ipaddress']}")
+        # 3. Disable static NAT
+        print("[3/8] Disabling static NAT...")
+        ip_data = cmk("list", "publicipaddresses",
+                       f"associatednetworkid={net_id}",
+                       "filter=id,ipaddress,issourcenat,isstaticnat")
+        ips = []
+        if ip_data:
+            for ip in ip_data.get("publicipaddress", []):
+                if not ip.get("issourcenat", False):
+                    ips.append(ip)
+        for ip in ips:
+            if ip.get("isstaticnat", False):
+                cmk("disable", "staticnat", f"ipaddressid={ip['id']}")
+                print(f"  Disabled static NAT on {ip['ipaddress']}")
 
-    # 6. Destroy VMs
-    print("[6/8] Destroying VMs...")
-    for vm in vms:
-        cmk("destroy", "virtualmachine", f"id={vm['id']}", "expunge=true")
-        print(f"  Destroyed {vm['name']}")
+        # 4. Delete firewall rules
+        print("[4/8] Deleting firewall rules...")
+        for ip in ips:
+            rules = cmk("list", "firewallrules", f"ipaddressid={ip['id']}",
+                         "filter=id,startport,endport")
+            if rules:
+                for r in rules.get("firewallrule", []):
+                    cmk("delete", "firewallrule", f"id={r['id']}")
+                    print(f"  Deleted FW rule {r.get('startport')}-{r.get('endport')} on {ip['ipaddress']}")
 
-    # 7. Delete network
-    print("[7/8] Deleting network...")
-    time.sleep(5)  # Wait for VMs to fully expunge
-    cmk("delete", "network", f"id={net_id}")
-    print(f"  Deleted {network_name}")
+        # 5. Release public IPs
+        print("[5/8] Releasing public IPs...")
+        for ip in ips:
+            cmk("disassociate", "ipaddress", f"id={ip['id']}")
+            print(f"  Released {ip['ipaddress']}")
 
-    # 8. Delete SSH key pair
+        # 6. Destroy VMs
+        print("[6/8] Destroying VMs...")
+        for vm in vms:
+            cmk("destroy", "virtualmachine", f"id={vm['id']}", "expunge=true")
+            print(f"  Destroyed {vm['name']}")
+
+        # 7. Delete network
+        print("[7/8] Deleting network...")
+        time.sleep(5)  # Wait for VMs to fully expunge
+        cmk("delete", "network", f"id={net_id}")
+        print(f"  Deleted {network_name} (zone={net_zone_id})")
+
+    # 8. Delete SSH key pair (once, after all networks are cleaned up)
     print("[8/8] Deleting SSH key pair...")
     cmk("delete", "sshkeypair", f"name={keypair_name}")
     print(f"  Deleted {keypair_name}")
@@ -159,9 +193,18 @@ def main():
         description="Tear down CloudStack infrastructure for a project")
     parser.add_argument("--network-name", required=True,
                         help="Network name (<repo-name>-<repo-id>)")
+    parser.add_argument("--zone", default=None,
+                        help="CloudStack zone name (e.g. ZP01). "
+                             "When set, only tears down resources in that zone. "
+                             "When omitted, tears down all zones.")
     args = parser.parse_args()
 
-    teardown(args.network_name)
+    zone_id = None
+    if args.zone:
+        zone_id = resolve_zone(args.zone)
+        print(f"Zone filter: {args.zone} ({zone_id})")
+
+    teardown(args.network_name, zone_id=zone_id)
 
 
 if __name__ == "__main__":

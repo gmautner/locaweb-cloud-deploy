@@ -15,6 +15,14 @@ concurrency:
 
 on:
   workflow_dispatch:
+    inputs:
+      zone:
+        description: "CloudStack zone"
+        type: choice
+        required: true
+        options:
+          - ZP01
+          - ZP02
 
 jobs:
   teardown:
@@ -44,7 +52,8 @@ jobs:
       - name: Teardown infrastructure
         run: |
           python3 -u scripts/teardown_infrastructure.py \
-            --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}"
+            --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}" \
+            --zone "${{ inputs.zone }}"
 
       - name: Print summary
         run: |

@@ -43,7 +43,7 @@ NETWORK_NAME = f"{REPO_NAME}-{REPO_ID}"
 
 RESULTS_PATH = "/tmp/e2e-test-results.json"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-TEARDOWN_SCRIPT = os.path.join(SCRIPT_DIR, "teardown_infrastructure.py")
+
 
 # Timeouts
 WORKFLOW_POLL_INTERVAL = 15  # seconds between polls for new run
@@ -260,21 +260,9 @@ def trigger_deploy(inputs):
 def trigger_teardown():
     """Trigger teardown.yml and wait for completion."""
     print("\n  --- Triggering teardown workflow ---")
-    run_id = trigger_workflow("teardown.yml", {})
+    run_id = trigger_workflow("teardown.yml", {"zone": ZONE})
     wait_for_run(run_id)
     print("  Teardown complete")
-
-
-def direct_teardown():
-    """Run teardown directly (not via workflow) for initial/emergency cleanup."""
-    print(f"\n  Running direct teardown for {NETWORK_NAME}...")
-    result = subprocess.run(
-        ["python3", "-u", TEARDOWN_SCRIPT,
-         "--network-name", NETWORK_NAME],
-        text=True,
-    )
-    if result.returncode != 0:
-        print(f"  Warning: Direct teardown exited with code {result.returncode}")
 
 
 # ---------------------------------------------------------------------------

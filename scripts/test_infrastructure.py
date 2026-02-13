@@ -407,10 +407,11 @@ class TestRunner:
 
     def teardown(self):
         """Call teardown_infrastructure.py."""
-        print(f"\n  Tearing down: {NETWORK_NAME}")
+        print(f"\n  Tearing down: {NETWORK_NAME} (zone={ZONE})")
         result = subprocess.run(
             ["python3", "-u", TEARDOWN_SCRIPT,
-             "--network-name", NETWORK_NAME],
+             "--network-name", NETWORK_NAME,
+             "--zone", ZONE],
             text=True,
         )
         if result.returncode != 0:

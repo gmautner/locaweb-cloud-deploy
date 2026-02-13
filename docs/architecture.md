@@ -147,9 +147,17 @@ A single-job workflow that provisions infrastructure and deploys the application
 
 Destroys all CloudStack resources in reverse creation order. Uses the same CloudMonkey installation pattern as the deploy workflow. Shares the `deploy-${{ github.repository }}` concurrency group with `deploy.yml`.
 
+**Workflow inputs:**
+
+| Input | Type | Required | Description |
+|---|---|---|---|
+| `zone` | choice (`ZP01`/`ZP02`) | yes | CloudStack zone to tear down |
+
+The `zone` input is passed as `--zone` to the teardown script, so only resources in the specified zone are destroyed. This is critical for cross-zone DR scenarios where the same network name exists in multiple zones.
+
 **Destruction sequence (8 steps):**
 
-1. Delete snapshot policies for all tagged data volumes.
+1. Delete snapshot policies for all tagged data volumes (zone-scoped).
 2. Detach and delete data volumes (blob, dbdata).
 3. Disable static NAT on all non-source-NAT public IPs.
 4. Delete firewall rules on all public IPs.
@@ -253,6 +261,11 @@ A Python script that uses the CloudMonkey CLI (`cmk`) to interact with the Cloud
 **File:** `scripts/teardown_infrastructure.py`
 
 Destroys all resources for a given network name in reverse creation order. Unlike the provision script, all `cmk` failures are non-fatal (logged as warnings) because partial deletion states are expected during teardown.
+
+**Zone-aware operation:**
+
+- **`--zone <name>`**: When provided, resolves the zone name to an ID and passes `zoneid` to the network and volume lookups, so only resources in that zone are found and destroyed. This is the mode used by the `teardown.yml` workflow and the `test_infrastructure.py` test runner.
+- **No `--zone`**: When omitted, the script finds **all** networks matching the name across all zones and runs the full 8-step destruction for each one. This is the "tear down everything" mode used by the E2E test workflow for initial and emergency cleanup.
 
 ### 4. Test Infrastructure Script
 
