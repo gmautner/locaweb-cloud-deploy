@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Create .kamal/secrets and process KAMAL_-prefixed GitHub entries.
+"""Create .kamal/secrets and process custom container env vars.
 
 Reads from environment:
-  ALL_SECRETS      - JSON of all GitHub secrets (from toJSON(secrets))
-  ALL_VARS         - JSON of all GitHub variables (from toJSON(vars))
+  KAMAL_SECRETS    - dotenv-formatted secret container env vars
+  KAMAL_VARS       - dotenv-formatted clear container env vars
   INPUT_DB_ENABLED - Whether database is enabled
 
 Outputs:
@@ -15,24 +15,13 @@ Outputs:
 import json
 import os
 import shlex
+from io import StringIO
 
-secrets = json.loads(os.environ.get('ALL_SECRETS', '{}'))
-variables = json.loads(os.environ.get('ALL_VARS', '{}'))
+from dotenv import dotenv_values
+
 db_enabled = os.environ.get('INPUT_DB_ENABLED') == 'true'
-
-# Collect KAMAL_-prefixed secrets (strip prefix for the target name)
-custom_secrets = {}
-for k, v in secrets.items():
-    if k.startswith('KAMAL_'):
-        stripped = k[len('KAMAL_'):]
-        custom_secrets[stripped] = v
-
-# Collect KAMAL_-prefixed variables (strip prefix for the target name)
-custom_vars = {}
-for k, v in variables.items():
-    if k.startswith('KAMAL_'):
-        stripped = k[len('KAMAL_'):]
-        custom_vars[stripped] = v
+custom_secrets = dict(dotenv_values(stream=StringIO(os.environ.get('KAMAL_SECRETS', ''))))
+custom_vars = dict(dotenv_values(stream=StringIO(os.environ.get('KAMAL_VARS', ''))))
 
 # Build .kamal/secrets with $VAR references (no cleartext values)
 lines = [

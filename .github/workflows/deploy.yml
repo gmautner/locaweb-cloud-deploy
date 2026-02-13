@@ -249,12 +249,14 @@ jobs:
           cp /tmp/ssh_key .kamal/ssh_key
           chmod 600 .kamal/ssh_key
 
-      - name: Create Kamal secrets and process KAMAL_-prefixed entries
+      - name: Create Kamal secrets and env vars
         env:
-          ALL_SECRETS: ${{ toJSON(secrets) }}
-          ALL_VARS: ${{ toJSON(vars) }}
+          KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
+          KAMAL_VARS: ${{ vars.KAMAL_VARS }}
           INPUT_DB_ENABLED: ${{ inputs.db_enabled }}
-        run: python3 scripts/create_kamal_secrets.py
+        run: |
+          pip install -q python-dotenv
+          python3 scripts/create_kamal_secrets.py
 
       - name: Generate Kamal deploy config
         env:
