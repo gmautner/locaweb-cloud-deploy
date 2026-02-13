@@ -24,13 +24,27 @@ on:
           - ZP01
           - ZP02
 
+  workflow_call:
+    inputs:
+      zone:
+        type: string
+        required: true
+    secrets:
+      CLOUDSTACK_API_KEY:
+        required: true
+      CLOUDSTACK_SECRET_KEY:
+        required: true
+
 jobs:
   teardown:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout infrastructure scripts
         uses: actions/checkout@v4
+        with:
+          repository: gmautner/locaweb-ai-deploy
+          path: _infra
 
       - name: Install and configure CloudMonkey
         env:
@@ -51,7 +65,7 @@ jobs:
 
       - name: Teardown infrastructure
         run: |
-          python3 -u scripts/teardown_infrastructure.py \
+          python3 -u _infra/scripts/teardown_infrastructure.py \
             --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}" \
             --zone "${{ inputs.zone }}"
 

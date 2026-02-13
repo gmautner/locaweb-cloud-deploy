@@ -112,6 +112,81 @@ on:
         required: false
         default: "05:00"
 
+  workflow_call:
+    inputs:
+      zone:
+        type: string
+        default: "ZP01"
+      domain:
+        type: string
+        default: ""
+      web_plan:
+        type: string
+        default: "small"
+      blob_disk_size_gb:
+        type: number
+        default: 20
+      workers_enabled:
+        type: boolean
+        default: false
+      workers_replicas:
+        type: number
+        default: 1
+      workers_cmd:
+        type: string
+        default: "sleep infinity"
+      workers_plan:
+        type: string
+        default: "small"
+      db_enabled:
+        type: boolean
+        default: false
+      db_plan:
+        type: string
+        default: "medium"
+      db_disk_size_gb:
+        type: number
+        default: 20
+      automatic_reboot:
+        type: boolean
+        default: true
+      recover:
+        type: boolean
+        default: false
+      automatic_reboot_time_utc:
+        type: string
+        default: "05:00"
+      kamal_vars:
+        type: string
+        default: ""
+        description: "Dotenv-formatted key=value pairs for clear container env vars"
+    secrets:
+      CLOUDSTACK_API_KEY:
+        required: true
+      CLOUDSTACK_SECRET_KEY:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+      POSTGRES_USER:
+        required: false
+      POSTGRES_PASSWORD:
+        required: false
+      KAMAL_SECRETS:
+        required: false
+    outputs:
+      web_ip:
+        description: "Web VM public IP"
+        value: ${{ jobs.deploy.outputs.web_ip }}
+      worker_ips:
+        description: "Worker VM public IPs (JSON array)"
+        value: ${{ jobs.deploy.outputs.worker_ips }}
+      db_ip:
+        description: "Database VM public IP"
+        value: ${{ jobs.deploy.outputs.db_ip }}
+      db_internal_ip:
+        description: "Database VM internal IP"
+        value: ${{ jobs.deploy.outputs.db_internal_ip }}
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -136,8 +211,14 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout repository
+      - name: Checkout application repository
         uses: actions/checkout@v4
+
+      - name: Checkout infrastructure scripts
+        uses: actions/checkout@v4
+        with:
+          repository: gmautner/locaweb-ai-deploy
+          path: _infra
 
       - name: Build configuration
         env:
@@ -152,7 +233,7 @@ jobs:
           INPUT_DB_PLAN: ${{ inputs.db_plan }}
           INPUT_DB_DISK_SIZE_GB: ${{ inputs.db_disk_size_gb }}
           INPUT_RECOVER: ${{ inputs.recover }}
-        run: python3 scripts/build_config.py
+        run: python3 _infra/scripts/build_config.py
 
       - name: Extract SSH public key
         env:
@@ -186,7 +267,7 @@ jobs:
           if [ "${{ inputs.recover }}" = "true" ]; then
             recover_flag="--recover"
           fi
-          python3 -u scripts/provision_infrastructure.py \
+          python3 -u _infra/scripts/provision_infrastructure.py \
             --repo-name "${{ github.event.repository.name }}" \
             --unique-id "${{ github.repository_id }}" \
             --config /tmp/config.json \
@@ -232,7 +313,7 @@ jobs:
 
       - name: Configure unattended upgrades
         run: |
-          python3 -u scripts/configure_unattended_upgrades.py \
+          python3 -u _infra/scripts/configure_unattended_upgrades.py \
             --ssh-key /tmp/ssh_key \
             --provision-output /tmp/provision-output.json \
             --automatic-reboot "${{ inputs.automatic_reboot }}" \
@@ -252,11 +333,11 @@ jobs:
       - name: Create Kamal secrets and env vars
         env:
           KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
-          KAMAL_VARS: ${{ vars.KAMAL_VARS }}
+          KAMAL_VARS: ${{ inputs.kamal_vars || vars.KAMAL_VARS }}
           INPUT_DB_ENABLED: ${{ inputs.db_enabled }}
         run: |
           pip install -q python-dotenv
-          python3 scripts/create_kamal_secrets.py
+          python3 _infra/scripts/create_kamal_secrets.py
 
       - name: Generate Kamal deploy config
         env:
@@ -267,7 +348,7 @@ jobs:
           REPO_NAME: ${{ github.event.repository.name }}
           REPO_FULL: ${{ github.repository }}
           REPO_OWNER: ${{ github.repository_owner }}
-        run: python3 scripts/generate_kamal_config.py
+        run: python3 _infra/scripts/generate_kamal_config.py
 
       - name: Deploy with Kamal
         env:
