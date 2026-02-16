@@ -49,6 +49,9 @@ git remote -v
 
 ## SSH Key Generation
 
+
+### Preview environment key
+
 Check if an SSH key already exists for this repo:
 
 ```bash
@@ -66,8 +69,26 @@ If the key already exists, reuse it -- do not overwrite.
 
 This key will be:
 - Stored as the `SSH_PRIVATE_KEY` GitHub secret (the private key)
-- Used locally to SSH into deployed VMs for debugging
+- Used locally to SSH into preview environment VMs for debugging
 - The public key is derived automatically by the deploy workflow at runtime
+
+### Production key
+
+Generate a separate key for production when setting up the production environment (Step 8):
+
+```bash
+test -f ~/.ssh/<repo-name>-prod && echo "Key exists" || echo "Key missing"
+```
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/<repo-name>-prod -N "" -C "<repo-name>-deploy-prod"
+chmod 600 ~/.ssh/<repo-name>-prod
+```
+
+This key will be:
+- Stored as the `SSH_PRIVATE_KEY_PROD` GitHub secret
+- Used locally to SSH into production VMs for debugging
+- The production caller workflow maps `SSH_PRIVATE_KEY_PROD` to the workflow's `SSH_PRIVATE_KEY` input
 
 ## CloudStack Credentials
 
@@ -136,8 +157,11 @@ Only create secrets that are **not already present**.
 ### Secrets the agent can set directly
 
 ```bash
-# SSH private key (skip if already set)
+# SSH private key for preview (skip if already set)
 gh secret set SSH_PRIVATE_KEY < ~/.ssh/<repo-name>
+
+# SSH private key for production (skip if already set)
+gh secret set SSH_PRIVATE_KEY_PROD < ~/.ssh/<repo-name>-prod
 
 # Postgres credentials for preview (skip if already set)
 gh secret set POSTGRES_USER --body "<username chosen by user>"
@@ -283,17 +307,18 @@ Continue the cycle: browse -> SSH debug -> fix source -> commit/push -> deploy -
 
 ## SSH Debugging
 
-Use the locally saved SSH key and the public IPs from the workflow output to connect to VMs.
+Use the locally saved SSH key and the public IPs from the workflow output to connect to VMs. Use the correct key for the environment: `~/.ssh/<repo-name>` for preview, `~/.ssh/<repo-name>-prod` for production.
 
 ```bash
-# SSH into web VM
+# Preview
 ssh -i ~/.ssh/<repo-name> root@<web_ip>
-
-# SSH into database VM
 ssh -i ~/.ssh/<repo-name> root@<db_ip>
-
-# SSH into a worker VM
 ssh -i ~/.ssh/<repo-name> root@<worker_ip>
+
+# Production
+ssh -i ~/.ssh/<repo-name>-prod root@<web_ip>
+ssh -i ~/.ssh/<repo-name>-prod root@<db_ip>
+ssh -i ~/.ssh/<repo-name>-prod root@<worker_ip>
 ```
 
 ### Useful debug commands on the VMs

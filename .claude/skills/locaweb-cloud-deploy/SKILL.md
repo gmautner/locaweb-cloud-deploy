@@ -66,6 +66,7 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 - If `~/.ssh/<repo-name>` already exists, skip generation and reuse the existing key
 - Otherwise, generate an Ed25519 SSH key locally at `~/.ssh/<repo-name>` with no passphrase
 - Set permissions to 0600
+- This key is used for the preview environment
 
 ### Step 4: Collect CloudStack credentials
 
@@ -82,6 +83,7 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 
 - Use `gh secret list` to check which secrets already exist in the repo
 - Only create secrets that are missing: `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`, `SSH_PRIVATE_KEY` (from the generated key), `POSTGRES_USER`, `POSTGRES_PASSWORD` (if database is enabled)
+- Production SSH and Postgres secrets use the `_PROD` suffix (see Step 8)
 - If the app has custom env vars or secrets, ask the user to store each secret **individually** in a separate terminal (e.g., `gh secret set API_KEY`, `gh secret set SMTP_PASSWORD`). Configure clear env vars via `gh variable set ENV_VARS`. **Never** accept secret values through the chat. **Never** store `SECRET_ENV_VARS` as a single GitHub Secret — compose it in the caller workflow from individual secret references (see [references/env-vars.md](references/env-vars.md))
 
 ### Step 7: Create caller workflows
@@ -93,9 +95,12 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 ### Step 8: Add production environment (when ready)
 
 - Suggest the user for authorization to create a production environment when ready
+- Generate a separate SSH key for production: `~/.ssh/<repo-name>-prod` (same procedure as Step 3)
+- Store it as `SSH_PRIVATE_KEY_PROD` GitHub secret
 - Create a production deploy workflow (triggered on `v*` tags, with custom domain)
 - See [DNS Configuration](#dns-configuration-for-custom-domains) for the domain setup procedure
-- Use separate Postgres credentials for production
+- Use separate Postgres credentials for production (`POSTGRES_USER_PROD`, `POSTGRES_PASSWORD_PROD`)
+- The production caller workflow maps `_PROD` suffixed secrets to the workflow's standard secret names (see [references/workflows.md](references/workflows.md))
 
 ## Development Routine
 

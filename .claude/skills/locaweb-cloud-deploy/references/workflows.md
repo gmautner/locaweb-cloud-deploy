@@ -44,7 +44,7 @@ After this runs successfully, the app is accessible at `http://<web_ip>.nip.io`.
 
 ## Production Workflow
 
-Add this when the application is ready for production. Triggered on version tags (`v*`), which ensures the production deployment always uses the exact code from the tagged commit. Uses a custom domain with automatic HTTPS. Note how the `secrets:` block maps `POSTGRES_USER_PROD`/`POSTGRES_PASSWORD_PROD` to the workflow's `POSTGRES_USER`/`POSTGRES_PASSWORD` inputs, keeping production credentials separate from preview.
+Add this when the application is ready for production. Triggered on version tags (`v*`), which ensures the production deployment always uses the exact code from the tagged commit. Uses a custom domain with automatic HTTPS. Note how the `secrets:` block maps the `_PROD` suffixed secrets (`SSH_PRIVATE_KEY_PROD`, `POSTGRES_USER_PROD`, `POSTGRES_PASSWORD_PROD`) to the workflow's standard secret names, keeping production credentials fully separate from preview.
 
 ```yaml
 # .github/workflows/deploy-production.yml
@@ -72,7 +72,7 @@ jobs:
     secrets:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PROD }}
       POSTGRES_USER: ${{ secrets.POSTGRES_USER_PROD }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PROD }}
 ```
