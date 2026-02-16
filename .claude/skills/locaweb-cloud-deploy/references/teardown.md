@@ -65,7 +65,8 @@ gh run list --workflow=deploy-preview.yml --limit=5
 # View a specific run's details (includes inputs)
 gh run view <run-id>
 
-# Download the provision-output artifact to see IPs
+# Download the provision-output artifact to see IPs (clean first to avoid stale data)
+rm -rf /tmp/provision-output
 gh run download <run-id> --name provision-output --dir /tmp/provision-output
 cat /tmp/provision-output/provision-output.json
 ```
@@ -91,7 +92,8 @@ To retrieve deployment information from a previous run:
 # Find the latest successful deploy run
 gh run list --workflow=deploy-preview.yml --status=success --limit=1
 
-# Get the run ID and download its artifact
+# Get the run ID and download its artifact (clean first to avoid stale data)
+rm -rf /tmp/output
 gh run download <run-id> --name provision-output --dir /tmp/output
 cat /tmp/output/provision-output.json
 ```

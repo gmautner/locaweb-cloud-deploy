@@ -79,11 +79,18 @@ gh secret list
 
 If `CLOUDSTACK_API_KEY` and `CLOUDSTACK_SECRET_KEY` appear in the list, skip this step.
 
-Otherwise, ask the user to provide their CloudStack API credentials. These are issued by the Locaweb Cloud account administrator.
+Otherwise, ask the user to set them in a separate terminal. **Never** accept secret values through the chat — they would be stored in conversation history.
 
-Required values:
-- `CLOUDSTACK_API_KEY`
-- `CLOUDSTACK_SECRET_KEY`
+Tell the user to run:
+
+```bash
+gh secret set CLOUDSTACK_API_KEY
+gh secret set CLOUDSTACK_SECRET_KEY
+```
+
+(`gh secret set` without `--body` reads the value interactively from stdin, so the secret never appears in command history or chat.)
+
+These credentials are issued by the Locaweb Cloud account administrator.
 
 ## Postgres Credentials
 
@@ -122,13 +129,13 @@ gh secret list
 gh variable list
 ```
 
-Only create secrets that are **not already present**. Use `gh secret set` directly -- do not ask the user to do it manually in the GitHub UI.
+Only create secrets that are **not already present**.
+
+**Security rule:** Never accept secret values through the chat — they would be stored in conversation history. For secrets the agent knows (generated passwords, local SSH keys), the agent can set them directly. For secrets only the user knows (CloudStack keys, app API keys), ask the user to set them in a separate terminal.
+
+### Secrets the agent can set directly
 
 ```bash
-# CloudStack credentials (skip if already set)
-gh secret set CLOUDSTACK_API_KEY --body "<value from user>"
-gh secret set CLOUDSTACK_SECRET_KEY --body "<value from user>"
-
 # SSH private key (skip if already set)
 gh secret set SSH_PRIVATE_KEY < ~/.ssh/<repo-name>
 
@@ -141,16 +148,40 @@ gh secret set POSTGRES_USER_PROD --body "<username chosen by user>"
 gh secret set POSTGRES_PASSWORD_PROD --body "<generated password>"
 ```
 
-For app-specific environment variables:
+### Secrets the user must set in a separate terminal
+
+Ask the user to run `gh secret set <NAME>` (without `--body`) for each user-provided secret. This reads the value interactively from stdin, so it never appears in chat or command history.
+
+CloudStack credentials (if not already set):
 
 ```bash
-# Clear (non-secret) env vars
+gh secret set CLOUDSTACK_API_KEY
+gh secret set CLOUDSTACK_SECRET_KEY
+```
+
+App-specific secrets — store each one **individually**. **Never** store `SECRET_ENV_VARS` as a single monolithic secret:
+
+```bash
+gh secret set API_KEY
+gh secret set SMTP_PASSWORD
+```
+
+Then compose them in the caller workflow's `SECRET_ENV_VARS` block:
+
+```yaml
+secrets:
+  SECRET_ENV_VARS: |-
+    API_KEY=${{ secrets.API_KEY }}
+    SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+```
+
+This way, updating a single secret only requires `gh secret set <NAME>` — no need to remember or rewrite the others.
+
+### Clear (non-secret) env vars
+
+```bash
 gh variable set ENV_VARS --body "APP_ENV=preview
 LOG_LEVEL=debug"
-
-# Secret env vars
-gh secret set SECRET_ENV_VARS --body "API_KEY=<value>
-SMTP_PASSWORD=<value>"
 ```
 
 Verify all secrets are set:
@@ -202,7 +233,8 @@ Continue the cycle: read error -> fix -> commit/push -> watch run. Do not give u
 # Get the web IP from the latest successful run
 gh run view <run-id>
 
-# Or download the provision-output artifact
+# Or download the provision-output artifact (clean first to avoid stale data)
+rm -rf /tmp/provision-output
 gh run download <run-id> --name provision-output --dir /tmp/provision-output
 cat /tmp/provision-output/provision-output.json
 ```

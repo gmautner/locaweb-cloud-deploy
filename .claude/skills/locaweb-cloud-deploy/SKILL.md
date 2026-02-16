@@ -70,7 +70,7 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 ### Step 4: Collect CloudStack credentials
 
 - Check if `CLOUDSTACK_API_KEY` and `CLOUDSTACK_SECRET_KEY` are already set in the repo (`gh secret list`)
-- If not set: ask the user to provide them
+- If not set: ask the user to set them in a separate terminal (see [references/setup-and-deploy.md](references/setup-and-deploy.md#cloudstack-credentials)). **Never** accept secret values through the chat — they would be stored in conversation history
 
 ### Step 5: Set up Postgres credentials
 
@@ -82,7 +82,7 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 
 - Use `gh secret list` to check which secrets already exist in the repo
 - Only create secrets that are missing: `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`, `SSH_PRIVATE_KEY` (from the generated key), `POSTGRES_USER`, `POSTGRES_PASSWORD` (if database is enabled)
-- If the app has custom env vars or secrets, create `SECRET_ENV_VARS` and configure `ENV_VARS` via `gh variable set`
+- If the app has custom env vars or secrets, ask the user to store each secret **individually** in a separate terminal (e.g., `gh secret set API_KEY`, `gh secret set SMTP_PASSWORD`). Configure clear env vars via `gh variable set ENV_VARS`. **Never** accept secret values through the chat. **Never** store `SECRET_ENV_VARS` as a single GitHub Secret — compose it in the caller workflow from individual secret references (see [references/env-vars.md](references/env-vars.md))
 
 ### Step 7: Create caller workflows
 
@@ -134,6 +134,66 @@ COPY . .
 EXPOSE 80
 CMD ["gunicorn", "--bind", "0.0.0.0:80", "--workers", "2", "app:app"]
 ```
+
+## Database Migrations
+
+The platform runs a single web VM, so running migrations at container startup is the correct approach. This avoids race conditions (no concurrent instances), requires no separate migration container, and keeps migrations synchronized with the deployment lifecycle — a new code push triggers a redeploy, which restarts the container, which runs migrations before serving traffic.
+
+Include migrations in the container entrypoint, before the web server starts:
+
+```dockerfile
+CMD ["sh", "-c", "python manage.py migrate && exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
+```
+
+The agent must ensure that:
+
+1. **Migration commands run in the entrypoint** — before the web server process starts. The app should not serve requests until migrations complete.
+2. **All migration dependencies are bundled in the Docker image** — SQL scripts, migration files, and any libraries used by the migration tool (e.g., `alembic`, `django`, `knex`, `ActiveRecord`) must be installed in the image. Verify that the `COPY` and `RUN pip install` (or equivalent) steps include everything the migration command needs.
+
+If the app also uses cron (see below), combine both in the entrypoint:
+
+```dockerfile
+CMD ["sh", "-c", "python manage.py migrate && (env && cat config/crontab) | crontab - && cron && exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
+```
+
+## Cron Jobs
+
+There is no need for a separate cron container. Run cron in the background before starting the web server.
+
+Most slim base images do not include cron. In that case, install it in the Dockerfile:
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends cron && rm -rf /var/lib/apt/lists/*
+```
+
+Then configure the entrypoint to load the crontab and start cron in the background before the web server:
+
+```dockerfile
+CMD ["sh", "-c", "(env && cat config/crontab) | crontab - && cron && exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
+```
+
+The `COPY . .` in the standard Dockerfile pattern already includes `config/crontab` in the image — no extra COPY needed.
+
+Cron does not inherit the container's environment variables by default. The `env` prefix in the command above pipes the current environment into the crontab, making all variables (including `DATABASE_URL`, `POSTGRES_HOST`, etc.) available to cron jobs.
+
+Place the crontab file at `config/crontab` in the repository. Standard crontab format:
+
+```
+*/5 * * * * cd /app && python scripts/cleanup.py >> /proc/1/fd/1 2>&1
+0 2 * * * cd /app && python scripts/daily_report.py >> /proc/1/fd/1 2>&1
+```
+
+Redirect output to `/proc/1/fd/1` so cron job logs appear in the container's stdout (visible via `docker logs` and Kamal).
+
+### Resource-intensive cron jobs
+
+If a cron job performs heavy work (large data processing, bulk emails, report generation), avoid running it on the web VM where it would compete with request handling. Instead, have the cron entry submit a job to the workers via Postgres:
+
+1. Cron job inserts a row into a jobs table (lightweight, runs on the web VM)
+2. Workers poll the jobs table using `SELECT ... FOR UPDATE SKIP LOCKED` to pick up and execute jobs
+3. Workers update the row with status and results on completion
+
+This keeps cron entries small and fast while offloading the actual work to worker VMs.
 
 ## Deployment Outputs and URLs
 

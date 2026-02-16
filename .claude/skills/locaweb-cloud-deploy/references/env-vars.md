@@ -48,6 +48,19 @@ Dotenv format rules:
 
 Pass sensitive configuration as the `SECRET_ENV_VARS` workflow secret. Same dotenv format.
 
+Store each secret **individually** as a GitHub Secret. **Never** create a single `SECRET_ENV_VARS` GitHub Secret containing all values — this makes it impossible to update one secret without rewriting them all.
+
+Tell the user to set these in a separate terminal using `gh secret set <NAME>` (without `--body`), so the value is read interactively and never appears in chat or command history. **Never** accept secret values through the chat.
+
+```bash
+# User runs these in a separate terminal
+gh secret set STRIPE_KEY
+gh secret set SENDGRID_API_KEY
+gh secret set ENCRYPTION_KEY
+```
+
+Then compose `SECRET_ENV_VARS` in the caller workflow from individual secret references:
+
 ```yaml
 # In the caller workflow
 secrets:
