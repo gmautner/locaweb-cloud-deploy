@@ -173,23 +173,31 @@ gh secret set POSTGRES_USER_PRODUCTION --body "<username chosen by user>"
 gh secret set POSTGRES_PASSWORD_PRODUCTION --body "<generated password>"
 ```
 
-### Secrets the user must set in a separate terminal
+### Secrets the user must set via GitHub UI
 
-Ask the user to run `gh secret set <NAME>` (without `--body`) for each user-provided secret. This reads the value interactively from stdin, so it never appears in chat or command history.
+Get the repository's secrets settings URL:
+
+```bash
+echo "$(gh repo view --json url -q .url)/settings/secrets/actions"
+```
+
+Give the user the URL and ask them to click **"New repository secret"** for each secret below. For each secret, tell the user:
+1. The exact **Name** to enter.
+2. Where to find the **Secret** value (e.g., which dashboard, settings page, or credential file to look in).
 
 CloudStack credentials (if not already set):
 
-```bash
-gh secret set CLOUDSTACK_API_KEY
-gh secret set CLOUDSTACK_SECRET_KEY
-```
+| Name | Where to find the value |
+|------|------------------------|
+| `CLOUDSTACK_API_KEY` | [painel-cloud.locaweb.com.br](https://painel-cloud.locaweb.com.br/) → Contas → *(sua conta)* → Visualizar usuários → *(seu usuário)* → Copiar Chave da API |
+| `CLOUDSTACK_SECRET_KEY` | Same page → Copiar Chave secreta |
 
 App-specific secrets — store each one **individually**. **Never** store `SECRET_ENV_VARS` as a single monolithic secret:
 
-```bash
-gh secret set API_KEY
-gh secret set SMTP_PASSWORD
-```
+| Name | Where to find the value |
+|------|------------------------|
+| `API_KEY` | *(describe where the user can find this value)* |
+| `SMTP_PASSWORD` | *(describe where the user can find this value)* |
 
 Then compose them in the caller workflow's `SECRET_ENV_VARS` block:
 
@@ -200,7 +208,7 @@ secrets:
     SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
 ```
 
-This way, updating a single secret only requires `gh secret set <NAME>` — no need to remember or rewrite the others.
+This way, updating a single secret only requires creating/updating it in the GitHub UI — no need to remember or rewrite the others.
 
 ### Clear (non-secret) env vars
 
@@ -229,6 +237,12 @@ gh run watch
 # Or list runs and watch a specific one
 gh run list --limit=5
 gh run watch <run-id>
+```
+
+Give the user a direct link to the job in the GitHub UI:
+
+```bash
+echo "$(gh repo view --json url -q .url)/actions/runs/<run-id>/job/$(gh run view <run-id> --json jobs -q '.jobs[0].databaseId')"
 ```
 
 ### 2. If the workflow fails

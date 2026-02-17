@@ -48,6 +48,19 @@ Create one teardown workflow per environment. For example:
 - `teardown-preview.yml` with `env_name: "preview"`, `zone: "ZP01"`
 - `teardown-production.yml` with `env_name: "production"`, `zone: "ZP01"`
 
+### Monitoring the teardown run
+
+```bash
+gh run list --workflow=teardown-preview.yml --limit=5
+gh run watch <run-id>
+```
+
+Give the user a direct link to the job in the GitHub UI:
+
+```bash
+echo "$(gh repo view --json url -q .url)/actions/runs/<run-id>/job/$(gh run view <run-id> --json jobs -q '.jobs[0].databaseId')"
+```
+
 ## Inferring Zone and env_name
 
 When tearing down an environment and the zone/env_name are not known, infer them from the existing deploy workflow:
