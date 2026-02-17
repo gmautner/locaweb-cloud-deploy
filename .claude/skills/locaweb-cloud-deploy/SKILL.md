@@ -26,6 +26,7 @@ These constraints apply to **every** application deployed to this platform. Comm
 - **No TLS without a domain**: nip.io URLs are HTTP only. Use a custom domain for HTTPS.
 - **Single PostgreSQL instance**: No read replicas or multiple databases.
 - **Workers use the same Docker image** with a different command (`workers_cmd`).
+- **No Docker build in the caller workflow**: The reusable deploy workflow builds, pushes, and deploys the Docker image internally via Kamal. The caller workflow must **not** include any Docker build or push steps (no `docker/build-push-action`, no `docker build`, no `docker push`, no login to ghcr.io). The caller just calls the reusable workflow — Kamal handles the entire build-push-deploy lifecycle using the Dockerfile at the repo root.
 
 If the application's current design conflicts with any of these (e.g., depends on Redis, listens on port 3000, uses multiple Dockerfiles), resolve the conflict **before** proceeding with deployment setup.
 

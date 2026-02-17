@@ -189,7 +189,17 @@ permissions:
   packages: write
 ```
 
-`packages: write` is required for pushing container images to ghcr.io. The teardown workflow does not need `packages: write`.
+`packages: write` is required because the reusable deploy workflow pushes the container image to ghcr.io internally via Kamal. The teardown workflow does not need `packages: write`.
+
+## No Docker Build Steps in Caller Workflows
+
+Do **not** add any of these to the caller workflow:
+
+- `docker/build-push-action` or `docker/login-action` actions
+- `docker build`, `docker push`, or `docker login` commands
+- Any step that builds or pushes a container image
+
+The reusable deploy workflow handles the entire Docker lifecycle internally: it checks out the application code, generates a Kamal configuration pointing to ghcr.io, and runs `kamal setup`, which builds the image from the Dockerfile at the repo root, pushes it to ghcr.io, and deploys it to the VMs — all in a single step. The `GITHUB_TOKEN` (provided automatically by GitHub Actions) is used as the registry credential, so no separate registry login is needed either.
 
 ## Passing Outputs to Downstream Jobs
 
