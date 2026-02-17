@@ -74,7 +74,7 @@ These become secret environment variables in the container (never logged).
 
 ## Passing Variables in Caller Workflows
 
-Complete example showing both clear and secret custom variables:
+Complete example showing both clear and secret custom variables for a production environment. Note how environment-scoped secrets use the `_PRODUCTION` suffix, while common secrets (`CLOUDSTACK_*`) are shared across all environments:
 
 ```yaml
 jobs:
@@ -91,12 +91,12 @@ jobs:
     secrets:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER_PRODUCTION }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PRODUCTION }}
       SECRET_ENV_VARS: |-
-        API_KEY=${{ secrets.API_KEY }}
-        JWT_SECRET=${{ secrets.JWT_SECRET }}
+        API_KEY=${{ secrets.API_KEY_PRODUCTION }}
+        JWT_SECRET=${{ secrets.JWT_SECRET_PRODUCTION }}
 ```
 
 ## Database Connection Variables

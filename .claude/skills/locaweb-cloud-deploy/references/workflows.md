@@ -2,16 +2,16 @@
 
 ## Table of Contents
 
-- [Preview Workflow (Recommended First Step)](#preview-workflow-recommended-first-step)
-- [Production Workflow](#production-workflow)
+- [Preview Workflow (Default)](#preview-workflow-default)
+- [Additional Environments](#additional-environments)
 - [Deploy Input Reference](#deploy-input-reference)
 - [Complete Example (All Inputs)](#complete-example-all-inputs)
 - [Workflow Permissions](#workflow-permissions)
 - [Passing Outputs to Downstream Jobs](#passing-outputs-to-downstream-jobs)
 
-## Preview Workflow (Recommended First Step)
+## Preview Workflow (Default)
 
-Start with this. No domain, triggered on push, uses nip.io for immediate access.
+The default preview environment is triggered on push, immediately reflecting changes to the main branch — matching a typical developer workflow. No domain needed, uses nip.io for immediate access. Since `"preview"` is the default `env_name`, secrets use unsuffixed names.
 
 ```yaml
 # .github/workflows/deploy-preview.yml
@@ -42,9 +42,29 @@ jobs:
 
 After this runs successfully, the app is accessible at `http://<web_ip>.nip.io`. The `web_ip` is visible in the workflow run summary.
 
-## Production Workflow
+## Additional Environments
 
-Add this when the application is ready for production. Triggered on version tags (`v*`), which ensures the production deployment always uses the exact code from the tagged commit. Uses a custom domain with automatic HTTPS. Note how the `secrets:` block maps the `_PROD` suffixed secrets (`SSH_PRIVATE_KEY_PROD`, `POSTGRES_USER_PROD`, `POSTGRES_PASSWORD_PROD`) to the workflow's standard secret names, keeping production credentials fully separate from preview.
+Other environments can be created depending on your processes, changing the triggers and workflow inputs as needed. Each `env_name` creates fully isolated infrastructure.
+
+### Secret naming convention
+
+Since `"preview"` is the default environment, its secrets use **unsuffixed** names:
+
+- `SSH_PRIVATE_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- Custom secrets: `API_KEY`, `SMTP_PASSWORD`
+
+For additional environments, suffix secret names that are **scoped to that environment** with the environment name (uppercased):
+
+- `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`
+- Custom secrets: `API_KEY_PRODUCTION`, `SMTP_PASSWORD_PRODUCTION`
+
+Secrets **common to all environments** (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need suffixes — just pass them in every caller workflow.
+
+The caller workflow maps the suffixed secrets to the reusable workflow's standard secret names (see example below).
+
+### Production workflow example
+
+A recommended additional environment is **"production"**, triggered on version tags (`v*`). A tag signals that the pointed commit is ready for production. Uses a custom domain with automatic HTTPS.
 
 ```yaml
 # .github/workflows/deploy-production.yml
@@ -72,9 +92,9 @@ jobs:
     secrets:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
-      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PROD }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER_PROD }}
-      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PROD }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
+      POSTGRES_USER: ${{ secrets.POSTGRES_USER_PRODUCTION }}
+      POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PRODUCTION }}
 ```
 
 To deploy to production: `git tag v1.0.0 && git push --tags`. The workflow checks out the tagged commit, so the Dockerfile and source code match the tag exactly.
@@ -85,8 +105,8 @@ All inputs, their types, defaults, and when to use them:
 
 | Input | Type | Default | When to set |
 |-------|------|---------|-------------|
-| `env_name` | string | `"preview"` | Always set explicitly to name the environment. Each env_name creates fully isolated infrastructure. |
-| `zone` | string | `"ZP01"` | Usually leave as `ZP01`. Use `ZP02` for geographic redundancy. |
+| `env_name` | string | `"preview"` | Name of the environment. Each env_name creates fully isolated infrastructure. Defaults to `"preview"` if omitted. |
+| `zone` | string | `"ZP01"` | CloudStack zone. Usually leave as default. Use `ZP02` for geographic redundancy. |
 | `domain` | string | `""` (empty) | Set for production environments where HTTPS is needed. Leave empty for preview/dev (uses nip.io). See SKILL.md for the DNS setup procedure. |
 | `web_plan` | string | `"small"` | Choose based on runtime footprint and environment. See [scaling.md](scaling.md) for plan specs. |
 | `blob_disk_size_gb` | number | `20` | Increase if the app stores files (uploads, media). Consider environment: preview can use smaller, production may need more. Can only grow, never shrink. |
@@ -128,8 +148,8 @@ jobs:
   deploy:
     uses: gmautner/locaweb-ai-deploy/.github/workflows/deploy.yml@main
     with:
-      env_name: "preview"                    # Required
-      zone: "ZP01"                           # Required (options: ZP01, ZP02)
+      env_name: "preview"                    # Optional, default: "preview"
+      zone: "ZP01"                           # Optional, default: "ZP01" (options: ZP01, ZP02)
       domain: ""                             # Optional, default: "" (empty = nip.io, no HTTPS)
       web_plan: "small"                      # Optional, default: "small"
       blob_disk_size_gb: 20                  # Optional, default: 20 (grow only, never shrink)

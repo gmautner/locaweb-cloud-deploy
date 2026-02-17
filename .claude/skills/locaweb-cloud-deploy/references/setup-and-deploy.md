@@ -72,23 +72,23 @@ This key will be:
 - Used locally to SSH into preview environment VMs for debugging
 - The public key is derived automatically by the deploy workflow at runtime
 
-### Production key
+### Additional environment keys
 
-Generate a separate key for production when setting up the production environment (Step 8):
+Generate a separate key for each additional environment (Step 8). For example, for the "production" environment:
 
 ```bash
-test -f ~/.ssh/<repo-name>-prod && echo "Key exists" || echo "Key missing"
+test -f ~/.ssh/<repo-name>-production && echo "Key exists" || echo "Key missing"
 ```
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/<repo-name>-prod -N "" -C "<repo-name>-deploy-prod"
-chmod 600 ~/.ssh/<repo-name>-prod
+ssh-keygen -t ed25519 -f ~/.ssh/<repo-name>-production -N "" -C "<repo-name>-deploy-production"
+chmod 600 ~/.ssh/<repo-name>-production
 ```
 
 This key will be:
-- Stored as the `SSH_PRIVATE_KEY_PROD` GitHub secret
-- Used locally to SSH into production VMs for debugging
-- The production caller workflow maps `SSH_PRIVATE_KEY_PROD` to the workflow's `SSH_PRIVATE_KEY` input
+- Stored as a suffixed GitHub secret matching the environment name: e.g., `SSH_PRIVATE_KEY_PRODUCTION`
+- Used locally to SSH into that environment's VMs for debugging
+- The caller workflow maps the suffixed secret to the workflow's standard `SSH_PRIVATE_KEY` input
 
 ## CloudStack Credentials
 
@@ -135,11 +135,12 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-For multiple environments, use suffixed secret names:
-- `POSTGRES_USER` / `POSTGRES_PASSWORD` for preview
-- `POSTGRES_USER_PROD` / `POSTGRES_PASSWORD_PROD` for production
+The default preview environment uses unsuffixed names: `POSTGRES_USER` / `POSTGRES_PASSWORD`.
 
-The caller workflow passes the correct pair in each environment's `secrets:` block.
+Additional environments use suffixed names matching the environment name:
+- `POSTGRES_USER_PRODUCTION` / `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
+
+The caller workflow maps the suffixed secrets to the reusable workflow's standard secret names.
 
 ## Creating GitHub Secrets
 
@@ -160,16 +161,16 @@ Only create secrets that are **not already present**.
 # SSH private key for preview (skip if already set)
 gh secret set SSH_PRIVATE_KEY < ~/.ssh/<repo-name>
 
-# SSH private key for production (skip if already set)
-gh secret set SSH_PRIVATE_KEY_PROD < ~/.ssh/<repo-name>-prod
+# SSH private key for additional environments, e.g. production (skip if already set)
+gh secret set SSH_PRIVATE_KEY_PRODUCTION < ~/.ssh/<repo-name>-production
 
 # Postgres credentials for preview (skip if already set)
 gh secret set POSTGRES_USER --body "<username chosen by user>"
 gh secret set POSTGRES_PASSWORD --body "<generated password>"
 
-# Postgres credentials for production (skip if already set)
-gh secret set POSTGRES_USER_PROD --body "<username chosen by user>"
-gh secret set POSTGRES_PASSWORD_PROD --body "<generated password>"
+# Postgres credentials for additional environments, e.g. production (skip if already set)
+gh secret set POSTGRES_USER_PRODUCTION --body "<username chosen by user>"
+gh secret set POSTGRES_PASSWORD_PRODUCTION --body "<generated password>"
 ```
 
 ### Secrets the user must set in a separate terminal
@@ -307,7 +308,7 @@ Continue the cycle: browse -> SSH debug -> fix source -> commit/push -> deploy -
 
 ## SSH Debugging
 
-Use the locally saved SSH key and the public IPs from the workflow output to connect to VMs. Use the correct key for the environment: `~/.ssh/<repo-name>` for preview, `~/.ssh/<repo-name>-prod` for production.
+Use the locally saved SSH key and the public IPs from the workflow output to connect to VMs. Use the correct key for the environment: `~/.ssh/<repo-name>` for preview, `~/.ssh/<repo-name>-<env_name>` for other environments.
 
 ```bash
 # Preview
@@ -315,10 +316,10 @@ ssh -i ~/.ssh/<repo-name> root@<web_ip>
 ssh -i ~/.ssh/<repo-name> root@<db_ip>
 ssh -i ~/.ssh/<repo-name> root@<worker_ip>
 
-# Production
-ssh -i ~/.ssh/<repo-name>-prod root@<web_ip>
-ssh -i ~/.ssh/<repo-name>-prod root@<db_ip>
-ssh -i ~/.ssh/<repo-name>-prod root@<worker_ip>
+# Production (or other environment — use the corresponding key)
+ssh -i ~/.ssh/<repo-name>-production root@<web_ip>
+ssh -i ~/.ssh/<repo-name>-production root@<db_ip>
+ssh -i ~/.ssh/<repo-name>-production root@<worker_ip>
 ```
 
 ### Useful debug commands on the VMs

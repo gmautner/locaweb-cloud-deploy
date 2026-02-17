@@ -77,13 +77,15 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 
 - Check if `POSTGRES_USER` and `POSTGRES_PASSWORD` are already set in the repo (`gh secret list`)
 - If not set: choose a `POSTGRES_USER` (e.g., `myapp_user`) and generate a random password for each environment
-- Use suffixed secret names per environment: `POSTGRES_USER`/`POSTGRES_PASSWORD` for preview, `POSTGRES_USER_PROD`/`POSTGRES_PASSWORD_PROD` for production
+- The default preview environment uses unsuffixed names: `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- Additional environments use suffixed names matching the environment name: e.g., `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
 
 ### Step 6: Create GitHub secrets
 
 - Use `gh secret list` to check which secrets already exist in the repo
 - Only create secrets that are missing: `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`, `SSH_PRIVATE_KEY` (from the generated key), `POSTGRES_USER`, `POSTGRES_PASSWORD` (if database is enabled)
-- Production SSH and Postgres secrets use the `_PROD` suffix (see Step 8)
+- Secrets common to all environments (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need suffixes — pass them to every caller workflow
+- Secrets scoped to additional environments use a suffix matching the environment name (see Step 8)
 - If the app has custom env vars or secrets, ask the user to store each secret **individually** in a separate terminal (e.g., `gh secret set API_KEY`, `gh secret set SMTP_PASSWORD`). Configure clear env vars via `gh variable set ENV_VARS`. **Never** accept secret values through the chat. **Never** store `SECRET_ENV_VARS` as a single GitHub Secret — compose it in the caller workflow from individual secret references (see [references/env-vars.md](references/env-vars.md))
 
 ### Step 7: Create caller workflows
@@ -92,15 +94,22 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 - Create matching teardown workflow
 - See [references/workflows.md](references/workflows.md) for templates and input reference
 
-### Step 8: Add production environment (when ready)
+### Step 8: Add additional environments (when ready)
 
-- Suggest the user for authorization to create a production environment when ready
-- Generate a separate SSH key for production: `~/.ssh/<repo-name>-prod` (same procedure as Step 3)
-- Store it as `SSH_PRIVATE_KEY_PROD` GitHub secret
-- Create a production deploy workflow (triggered on `v*` tags, with custom domain)
-- See [DNS Configuration](#dns-configuration-for-custom-domains) for the domain setup procedure
-- Use separate Postgres credentials for production (`POSTGRES_USER_PROD`, `POSTGRES_PASSWORD_PROD`)
-- The production caller workflow maps `_PROD` suffixed secrets to the workflow's standard secret names (see [references/workflows.md](references/workflows.md))
+The preview workflow (triggered on push) gives immediate feedback on every change to the main branch, matching a typical developer flow. Other environments can be added depending on the team's processes.
+
+A common choice is a **"production" environment** triggered on version tags (`v*`), where a tag signals that the pointed commit is ready for production. Feel free to create other environments with different triggers and workflow inputs to match your needs.
+
+For each additional environment:
+
+- Generate a separate SSH key: `~/.ssh/<repo-name>-<env_name>` (same procedure as Step 3)
+- Store it as a suffixed GitHub secret matching the environment name: e.g., `SSH_PRIVATE_KEY_PRODUCTION`
+- If using a database, create separate Postgres credentials with the same suffix: e.g., `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`
+- If the app has custom secrets scoped to the environment, suffix them the same way: e.g., `API_KEY_PRODUCTION`, `SMTP_PASSWORD_PRODUCTION`
+- Secrets common to all environments (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need to be recreated — just pass them in every caller workflow
+- Create a caller deploy workflow for the environment (see [references/workflows.md](references/workflows.md))
+- The caller workflow maps the suffixed secrets to the workflow's standard secret names
+- For production with a custom domain, see [DNS Configuration](#dns-configuration-for-custom-domains)
 
 ## Development Routine
 
@@ -247,7 +256,7 @@ When the developer cannot run the language runtime or database locally:
 3. Browse the nip.io preview URL to verify
 4. Repeat
 
-**Recommendation**: Start with a single `preview` environment triggered on push, without a domain. This avoids DNS configuration during development. When the app is mature, add a second workflow for `production` with a custom domain.
+**Recommendation**: Start with the default `preview` environment triggered on push, without a domain. This gives immediate feedback on every change, with no DNS configuration needed during development. When the app is mature, add additional environments (e.g., `production` with a custom domain, triggered on version tags).
 
 ## References
 
