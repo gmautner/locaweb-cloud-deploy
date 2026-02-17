@@ -13,6 +13,8 @@ description: >
 
 # Locaweb Cloud Deploy
 
+**Always respond in the same language the user is using.**
+
 Deploy web applications to Locaweb Cloud by calling reusable workflows from `gmautner/locaweb-cloud-deploy`. The platform provisions CloudStack VMs, networks, disks, and firewall rules, then deploys containers via Kamal 2 with zero-downtime proxy.
 
 ## Platform Constraints (Read First)
