@@ -112,7 +112,7 @@ Users of the workflow (whether human or agent) should not need to interact direc
 
 | ID | Requirement |
 |----|-------------|
-| FR-26 | The deploy workflow shall validate that required secrets (`POSTGRES_USER`, `POSTGRES_PASSWORD`) are present when `db_enabled` is true, and fail fast with a clear error message if they are missing. |
+| FR-26 | The deploy workflow shall validate that the required secret (`POSTGRES_PASSWORD`) is present when `db_enabled` is true, and fail fast with a clear error message if it is missing. |
 
 ### 4.7 Application Requirements
 
@@ -123,7 +123,7 @@ The deployed application must meet the following contract:
 | FR-27 | The application shall listen on port 80. |
 | FR-28 | The application shall be built from a single Dockerfile at the repository root. |
 | FR-29 | If using workers, the same Dockerfile shall support a configurable CMD entrypoint for the worker process. |
-| FR-30 | If connecting to a database, the application shall read connection information from environment variables: `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DATABASE_URL`. |
+| FR-30 | If connecting to a database, the application shall read connection information from environment variables: `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DATABASE_URL`. These are provided automatically by the platform. |
 | FR-31 | The application shall provide a health check endpoint at `/up` that returns HTTP 200 when healthy. When the database is not configured (`POSTGRES_HOST` absent or empty), `/up` shall return 200 without attempting a database connection. |
 | FR-32 | The application shall be designed to scale vertically (larger VM) rather than horizontally (multiple web instances), as kamal-proxy with Let's Encrypt operates on a single web VM. |
 | FR-36 | The application shall degrade gracefully when the database is not configured: the index page shall display "Database not configured" instead of crashing, and all non-database features (file uploads, environment variable display) shall continue to work. |
@@ -216,7 +216,6 @@ When using the workflows internally, the following secrets are configured in thi
 | `CLOUDSTACK_API_KEY` | Always | API key for authenticating with the CloudStack API. |
 | `CLOUDSTACK_SECRET_KEY` | Always | Secret key for authenticating with the CloudStack API. |
 | `SSH_PRIVATE_KEY` | Always | SSH private key used for VM access during provisioning and Kamal deployment. |
-| `POSTGRES_USER` | When `db_enabled` | PostgreSQL superuser name. Validated at workflow start; workflow fails fast if missing. |
 | `POSTGRES_PASSWORD` | When `db_enabled` | PostgreSQL superuser password. Validated at workflow start; workflow fails fast if missing. |
 | `GITHUB_TOKEN` | Automatic | Provided automatically by GitHub Actions. Used for pushing container images to ghcr.io and for triggering workflows from the E2E test. |
 
@@ -265,7 +264,6 @@ jobs:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
       SECRET_ENV_VARS: |-
         STRIPE_KEY=${{ secrets.STRIPE_KEY }}

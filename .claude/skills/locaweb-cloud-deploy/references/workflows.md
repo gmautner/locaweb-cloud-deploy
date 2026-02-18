@@ -37,7 +37,6 @@ jobs:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
 ```
 
@@ -51,12 +50,12 @@ Other environments can be created depending on your processes, changing the trig
 
 Since `"preview"` is the default environment, its secrets use **unsuffixed** names:
 
-- `SSH_PRIVATE_KEY`, `POSTGRES_USER`, `POSTGRES_PASSWORD`
+- `SSH_PRIVATE_KEY`, `POSTGRES_PASSWORD`
 - Custom secrets: `API_KEY`, `SMTP_PASSWORD`
 
 For additional environments, suffix secret names that are **scoped to that environment** with the environment name (uppercased):
 
-- `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`
+- `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`
 - Custom secrets: `API_KEY_PRODUCTION`, `SMTP_PASSWORD_PRODUCTION`
 
 Secrets **common to all environments** (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need suffixes — just pass them in every caller workflow.
@@ -94,7 +93,6 @@ jobs:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER_PRODUCTION }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PRODUCTION }}
 ```
 
@@ -115,7 +113,7 @@ All inputs, their types, defaults, and when to use them:
 | `workers_replicas` | number | `1` | Number of worker VMs. Only relevant when `workers_enabled: true`. |
 | `workers_cmd` | string | `"sleep infinity"` | Command to run in worker containers. e.g., `"celery -A tasks worker --loglevel=info"` or `"python worker.py"`. |
 | `workers_plan` | string | `"small"` | VM size for workers. Choose based on worker workload intensity. See [scaling.md](scaling.md). |
-| `db_enabled` | boolean | `false` | Set `true` when the app needs PostgreSQL. Requires `POSTGRES_USER` and `POSTGRES_PASSWORD` secrets. |
+| `db_enabled` | boolean | `false` | Set `true` when the app needs PostgreSQL. Requires `POSTGRES_PASSWORD` secret. |
 | `db_plan` | string | `"medium"` | VM size for the database. Choose based on expected data size and query complexity. See [scaling.md](scaling.md). |
 | `db_disk_size_gb` | number | `20` | PostgreSQL data disk size. Consider environment and expected data growth. Can only grow, never shrink. |
 | `automatic_reboot` | boolean | `true` | Enable automatic reboot after unattended security upgrades. Usually leave as default. |
@@ -172,7 +170,6 @@ jobs:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}       # Required
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }} # Required
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}             # Required
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER }}                 # Required when db_enabled: true
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}         # Required when db_enabled: true
       SECRET_ENV_VARS: |-                                        # Optional (dotenv format)
         API_KEY=${{ secrets.API_KEY }}

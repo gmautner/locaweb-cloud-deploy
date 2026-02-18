@@ -47,6 +47,10 @@ fi
 mkdir -p "$MOUNT_POINT"
 mount "$DEVICE" "$MOUNT_POINT"
 
+# Create pgdata subdirectory so the Docker bind-mount target is clean
+# (avoids ext4 lost+found interfering with PostgreSQL initdb)
+mkdir -p "$MOUNT_POINT/pgdata"
+
 # Add to fstab for persistence
 if ! grep -q "$DEVICE" /etc/fstab; then
   echo "$DEVICE $MOUNT_POINT ext4 defaults,nofail 0 2" >> /etc/fstab

@@ -6,7 +6,6 @@
 #   CLOUDSTACK_API_KEY    - CloudStack API key
 #   CLOUDSTACK_SECRET_KEY - CloudStack secret key
 #   SSH_PRIVATE_KEY       - SSH private key for VM access
-#   POSTGRES_USER         - PostgreSQL username (if db_enabled)
 #   POSTGRES_PASSWORD     - PostgreSQL password (if db_enabled)
 #
 # Optional custom container env vars (dotenv format):
@@ -174,8 +173,6 @@ on:
         required: true
       SSH_PRIVATE_KEY:
         required: true
-      POSTGRES_USER:
-        required: false
       POSTGRES_PASSWORD:
         required: false
       SECRET_ENV_VARS:
@@ -207,11 +204,9 @@ jobs:
       - name: Validate secrets
         if: inputs.db_enabled
         env:
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           missing=()
-          [ -z "$POSTGRES_USER" ] && missing+=("POSTGRES_USER")
           [ -z "$POSTGRES_PASSWORD" ] && missing+=("POSTGRES_PASSWORD")
           if [ ${#missing[@]} -gt 0 ]; then
             echo "::error::db_enabled is true but required secrets are missing: ${missing[*]}"
@@ -363,12 +358,10 @@ jobs:
       - name: Deploy with Kamal
         env:
           KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_HOST: ${{ steps.outputs.outputs.db_internal_ip }}
-          POSTGRES_DB: ${{ github.event.repository.name }}
         run: |
-          export DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/$POSTGRES_DB"
+          export DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/postgres"
           source /tmp/kamal_custom_secrets.env
           kamal setup
 
@@ -376,12 +369,10 @@ jobs:
         if: inputs.db_enabled && steps.outputs.outputs.db_vm_scaled == 'true'
         env:
           KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
           POSTGRES_HOST: ${{ steps.outputs.outputs.db_internal_ip }}
-          POSTGRES_DB: ${{ github.event.repository.name }}
         run: |
-          export DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/$POSTGRES_DB"
+          export DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/postgres"
           source /tmp/kamal_custom_secrets.env
           echo "DB plan changed (VM was rescaled), rebooting DB accessory..."
           kamal accessory reboot db

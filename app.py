@@ -15,8 +15,8 @@ DB_CONFIGURED = bool(os.environ.get("POSTGRES_HOST", "").strip())
 DB_CONFIG = {
     "host": os.environ.get("POSTGRES_HOST", "localhost"),
     "port": "5432",
-    "dbname": os.environ.get("POSTGRES_DB", "app"),
-    "user": os.environ.get("POSTGRES_USER", "app"),
+    "dbname": os.environ.get("POSTGRES_DB", "postgres"),
+    "user": os.environ.get("POSTGRES_USER", "postgres"),
     "password": os.environ.get("POSTGRES_PASSWORD", ""),
 }
 

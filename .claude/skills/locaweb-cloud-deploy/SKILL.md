@@ -23,7 +23,14 @@ These constraints apply to **every** application deployed to this platform. Comm
 
 - **Single Dockerfile at repo root**, web app **must listen on port 80**
 - **Health check at `GET /up`** returning HTTP 200 when healthy
-- **Postgres only**: No Redis, Kafka, or other services. Use Postgres for queues (`SKIP LOCKED`), pub/sub (`LISTEN`/`NOTIFY`), job scheduling, caching, and any other patterns. If the app framework expects Redis or similar, find or implement a Postgres-backed alternative.
+- **Postgres only** (with 60+ bundled extensions via `supabase/postgres`): No Redis, Kafka, or other services. If the app framework expects these features, find or implement a Postgres-backed alternative using the bundled extensions:
+  - **Queues**: `pgmq` extension (CREATE EXTENSION pgmq) — lightweight message queue with `pgmq.send()`, `pgmq.read()`, `pgmq.delete()`
+  - **Pub/sub**: Native `LISTEN`/`NOTIFY`
+  - **Scheduling**: `pg_cron` extension — in-database cron (`SELECT cron.schedule(...)`)
+  - **Search**: Native full-text search (`tsvector`/`tsquery`) or `pgroonga` extension for multilingual/CJK
+  - **Vector database**: `pgvector` extension — embeddings storage and similarity search (`vector` type, `<->` operator)
+  - **JSON validation**: `pg_jsonschema` extension
+  - Other notable extensions: `pgjwt`, `pg_stat_statements`, `pgaudit`, `postgis`, `pg_hashids`
 - **Single web VM**: No horizontal web scaling. Scale vertically with larger `web_plan`. Prefer runtimes and frameworks that scale well vertically.
 - **No TLS without a domain**: nip.io URLs are HTTP only. Use a custom domain for HTTPS.
 - **Single PostgreSQL instance**: No read replicas or multiple databases.
@@ -54,7 +61,7 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 
 - Ensure a single `Dockerfile` at repo root, listening on port 80
 - Implement `GET /up` health check returning 200
-- If using a database: read connection from `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`. The app **must fail clearly** (not silently degrade) if these vars are expected but missing.
+- If using a database: read connection from env vars `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and/or `DATABASE_URL`. The workflow provides all of these automatically. The app **must fail clearly** (not silently degrade) if these vars are expected but missing.
 - If using workers: ensure the same Docker image supports a separate command for the worker process
 
 ### Step 2: Set up the GitHub repository
@@ -78,15 +85,16 @@ Follow these steps in order. Each step is idempotent -- safe to re-run across ag
 
 ### Step 5: Set up Postgres credentials
 
-- Check if `POSTGRES_USER` and `POSTGRES_PASSWORD` are already set in the repo (`gh secret list`)
-- If not set: choose a `POSTGRES_USER` (e.g., `myapp_user`) and generate a random password for each environment
-- The default preview environment uses unsuffixed names: `POSTGRES_USER`, `POSTGRES_PASSWORD`
-- Additional environments use suffixed names matching the environment name: e.g., `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
+- Check if `POSTGRES_PASSWORD` is already set in the repo (`gh secret list`)
+- If not set: generate a random password for each environment
+- The database user and database name are set by the platform via the env vars above — no manual configuration needed
+- The default preview environment uses unsuffixed names: `POSTGRES_PASSWORD`
+- Additional environments use suffixed names matching the environment name: e.g., `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
 
 ### Step 6: Create GitHub secrets
 
 - Use `gh secret list` to check which secrets already exist in the repo
-- Only create secrets that are missing: `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`, `SSH_PRIVATE_KEY` (from the generated key), `POSTGRES_USER`, `POSTGRES_PASSWORD` (if database is enabled)
+- Only create secrets that are missing: `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`, `SSH_PRIVATE_KEY` (from the generated key), `POSTGRES_PASSWORD` (if database is enabled)
 - Secrets common to all environments (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need suffixes — pass them to every caller workflow
 - Secrets scoped to additional environments use a suffix matching the environment name (see Step 8)
 - If the app has custom env vars or secrets, ask the user to store each secret **individually** in a separate terminal (e.g., `gh secret set API_KEY`, `gh secret set SMTP_PASSWORD`). Configure clear env vars via `gh variable set ENV_VARS`. **Never** accept secret values through the chat. **Never** store `SECRET_ENV_VARS` as a single GitHub Secret — compose it in the caller workflow from individual secret references (see [references/env-vars.md](references/env-vars.md))
@@ -107,7 +115,7 @@ For each additional environment:
 
 - Generate a separate SSH key: `~/.ssh/<repo-name>-<env_name>` (same procedure as Step 3)
 - Store it as a suffixed GitHub secret matching the environment name: e.g., `SSH_PRIVATE_KEY_PRODUCTION`
-- If using a database, create separate Postgres credentials with the same suffix: e.g., `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`
+- If using a database, create a separate Postgres password with the same suffix: e.g., `POSTGRES_PASSWORD_PRODUCTION`
 - If the app has custom secrets scoped to the environment, suffix them the same way: e.g., `API_KEY_PRODUCTION`, `SMTP_PASSWORD_PRODUCTION`
 - Secrets common to all environments (e.g., `CLOUDSTACK_API_KEY`, `CLOUDSTACK_SECRET_KEY`) don't need to be recreated — just pass them in every caller workflow
 - Create a caller deploy workflow for the environment (see [references/workflows.md](references/workflows.md))
@@ -138,7 +146,7 @@ After setup is complete, use this cycle to deploy and iterate on the application
 - Default `CMD`/entrypoint serves the web application
 - If using workers, the same image must support a separate command passed via `workers_cmd` input
 - Health check endpoint at `GET /up` returning HTTP 200 when healthy
-- If connecting to a database, read connection from env vars: `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, `DATABASE_URL`. The app must **fail with a clear error** if it needs the database but these variables are missing -- do not silently skip database functionality.
+- If connecting to a database, read connection from env vars: `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`, and/or `DATABASE_URL`. The workflow provides all of these automatically. The app must **fail with a clear error** if it needs the database but these variables are missing -- do not silently skip database functionality.
 
 Example minimal Dockerfile:
 

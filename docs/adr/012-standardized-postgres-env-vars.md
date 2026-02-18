@@ -17,12 +17,12 @@ Standardize on `POSTGRES_*` naming for all database environment variables passed
 | Variable | Type | Source |
 |----------|------|--------|
 | `POSTGRES_HOST` | Clear | DB VM internal IP |
-| `POSTGRES_DB` | Clear | Derived from repository name |
-| `POSTGRES_USER` | Secret | GitHub repository secret |
+| `POSTGRES_DB` | Clear | Hardcoded to `postgres` (ADR-025) |
+| `POSTGRES_USER` | Clear | Hardcoded to `postgres` (ADR-025) |
 | `POSTGRES_PASSWORD` | Secret | GitHub repository secret |
-| `DATABASE_URL` | Secret | Composed in `.kamal/secrets` as `postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/$POSTGRES_DB` |
+| `DATABASE_URL` | Secret | Composed in `.kamal/secrets` as `postgres://postgres:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/postgres` |
 
-Secret aliasing is removed -- `POSTGRES_USER` and `POSTGRES_PASSWORD` are passed directly to the container without renaming. `DATABASE_URL` is composed via shell variable interpolation in the `.kamal/secrets` file, making it available as a secret since it contains the password.
+**Update (ADR-025):** With the switch to `supabase/postgres`, `POSTGRES_USER` and `POSTGRES_DB` are now hardcoded clear env vars (`postgres`/`postgres`) rather than configurable secrets/values. Only `POSTGRES_PASSWORD` remains as a secret. `DATABASE_URL` is composed via shell variable interpolation in the `.kamal/secrets` file, making it available as a secret since it contains the password.
 
 ## Consequences
 

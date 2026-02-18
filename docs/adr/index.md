@@ -26,5 +26,6 @@ This directory contains the Architectural Decision Records (ADRs) for the `locaw
 | [ADR-020](020-reusable-workflow-call.md) | Reusable Workflows via workflow_call with Dual Checkout | Accepted |
 | [ADR-021](021-environment-name-support.md) | Environment Name Support for Multi-Environment Deployments | Accepted |
 | [ADR-022](022-per-environment-secret-and-ssh-key-isolation.md) | Per-Environment Secret and SSH Key Isolation | Accepted |
-| [ADR-023](023-supabase-postgres-image.md) | Switch to supabase/postgres with Automated Tag Resolution | Rejected |
+| [ADR-023](023-supabase-postgres-image.md) | Switch to supabase/postgres with Automated Tag Resolution | Rejected (see ADR-025) |
 | [ADR-024](024-plan-based-postgres-tuning.md) | Plan-Based PostgreSQL Parameter Tuning | Accepted |
+| [ADR-025](025-supabase-postgres-hardcoded.md) | Switch to supabase/postgres with Hardcoded Version | Accepted |

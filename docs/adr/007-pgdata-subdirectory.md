@@ -18,13 +18,11 @@ This is a well-known issue when running PostgreSQL in Docker with ext4-backed vo
 
 ## Decision
 
-Set the `PGDATA` environment variable to a subdirectory within the mount point:
+Use a host-level subdirectory to isolate `lost+found` from the PostgreSQL data directory.
 
-```
-PGDATA=/var/lib/postgresql/data/pgdata
-```
+**Current approach (ADR-025):** The DB VM cloud-init script creates `/data/db/pgdata`, and the Docker volume mapping binds `/data/db/pgdata:/var/lib/postgresql/data`. The container sees a clean mount point without `lost+found`. No `PGDATA` env var is needed.
 
-The host volume is mounted at `/var/lib/postgresql/data` (which contains `lost+found`), but PostgreSQL initializes and stores its data in the `pgdata` subdirectory beneath it, which starts empty.
+**Previous approach:** Set the `PGDATA` environment variable to `/var/lib/postgresql/data/pgdata` while mounting the host volume at `/var/lib/postgresql/data`. This achieved the same isolation but required the env var.
 
 On the host, the actual data path is `/data/db/pgdata`.
 

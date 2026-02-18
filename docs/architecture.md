@@ -42,7 +42,7 @@ The deploy and teardown workflows support dual triggers: `workflow_dispatch` for
 ### TODOs
 
 - **IP filtering for SSH.** Restrict SSH firewall rules to GitHub Actions runner IP ranges.
-- **PostgreSQL extensions.** Provide a mechanism for callers to install additional PostgreSQL extensions (e.g. pgvector, pg_cron) on the official `postgres:17` image.
+- ~~**PostgreSQL extensions.**~~ Resolved: `supabase/postgres` bundles 60+ extensions (pgvector, pg_cron, pgmq, pg_jsonschema, etc.) out of the box (ADR-025).
 
 ---
 
@@ -133,7 +133,7 @@ A single-job reusable workflow that provisions infrastructure and deploys the ap
 
 **Step sequence:**
 
-1. **Validate secrets** -- If `db_enabled` is true, verifies that `POSTGRES_USER` and `POSTGRES_PASSWORD` secrets exist. Fails fast if missing.
+1. **Validate secrets** -- If `db_enabled` is true, verifies that the `POSTGRES_PASSWORD` secret exists. Fails fast if missing.
 2. **Checkout application repository** -- `actions/checkout@v4` retrieves the caller's code (or this repo in internal mode).
 2b. **Checkout infrastructure scripts** -- `actions/checkout@v4` with `repository: gmautner/locaweb-cloud-deploy` and `path: _infra`.
 3. **Build configuration** -- Inline Python assembles workflow inputs into a JSON config file at `/tmp/config.json`.
@@ -145,7 +145,7 @@ A single-job reusable workflow that provisions infrastructure and deploys the ap
 9. **Print summary** -- Generates a Markdown table of provisioned resources in the GitHub Actions step summary.
 10. **Install Kamal** -- `gem install kamal` (Kamal 2 from RubyGems).
 11. **Prepare SSH key** -- Copies the private key to `.kamal/ssh_key` with mode 600.
-12. **Create secrets file and env vars** -- Writes `.kamal/secrets` with `$VAR` references for `KAMAL_REGISTRY_PASSWORD`, and conditionally `POSTGRES_USER`, `POSTGRES_PASSWORD`, and `DATABASE_URL` (if `db_enabled`). Parses the `SECRET_ENV_VARS` secret and `ENV_VARS` variable (both in dotenv format) using `python-dotenv`: secrets are added as `$VAR` references in `.kamal/secrets` and their resolved values are written to a sourceable env file for the deploy step; variables are written to a JSON file for the config generation step to merge as clear env vars.
+12. **Create secrets file and env vars** -- Writes `.kamal/secrets` with `$VAR` references for `KAMAL_REGISTRY_PASSWORD`, and conditionally `POSTGRES_PASSWORD` and `DATABASE_URL` (if `db_enabled`). Parses the `SECRET_ENV_VARS` secret and `ENV_VARS` variable (both in dotenv format) using `python-dotenv`: secrets are added as `$VAR` references in `.kamal/secrets` and their resolved values are written to a sourceable env file for the deploy step; variables are written to a JSON file for the config generation step to merge as clear env vars.
 13. **Generate deploy config** -- Inline Python dynamically generates `config/deploy.yml` (the Kamal configuration) from the provision output, incorporating conditional sections for workers and database accessories. When the `domain` input is set, the proxy host is set to the domain and SSL is enabled via Let's Encrypt; otherwise, nip.io wildcard DNS is used with SSL disabled. Merges any custom variables from `ENV_VARS` as clear env vars and custom secrets from `SECRET_ENV_VARS` as secret env vars.
 14. **Deploy with Kamal** -- Runs `kamal setup`, which handles Docker installation on all hosts, registry authentication, image build and push, accessory boot (PostgreSQL), and application deployment behind kamal-proxy.
 15. **Reboot DB accessory if tuning changed** -- (Only when `db_enabled`) Compares the desired PostgreSQL `cmd` from the generated config against the running container's command via `docker inspect`. If the parameters differ (i.e., `db_plan` changed since the last deploy), runs `kamal accessory reboot db` to recreate the container with updated tuning. Skipped on first deploy (container was just created with correct parameters) and when the plan hasn't changed. This is necessary because `kamal setup` skips existing accessory containers, and Docker's `--restart unless-stopped` policy preserves the original command even across VM reboots.
@@ -339,28 +339,24 @@ env:
   clear:
     BLOB_STORAGE_PATH: /data/blobs
     POSTGRES_HOST: <db-internal-ip>      # Only if db_enabled
-    POSTGRES_DB: <repo-name>
+    POSTGRES_DB: postgres
+    POSTGRES_USER: postgres
   secret:                               # Only if db_enabled
-    - POSTGRES_USER
     - POSTGRES_PASSWORD
     - DATABASE_URL
 volumes:
   - /data/blobs:/data/blobs
 accessories:                            # Only if db_enabled
   db:
-    image: postgres:17
+    image: supabase/postgres:17.6.1.084
     host: <db-public-ip>
     port: "5432:5432"
-    cmd: --shared_buffers=1GB --effective_cache_size=3GB --work_mem=10MB --maintenance_work_mem=256MB --max_connections=100  # Tuned for db_plan (e.g. medium/4GB)
+    cmd: postgres -D /etc/postgresql -c shared_buffers=1GB -c effective_cache_size=3GB -c work_mem=10MB -c maintenance_work_mem=256MB -c max_connections=100  # Tuned for db_plan (e.g. medium/4GB)
     env:
-      clear:
-        POSTGRES_DB: <repo-name>
-        PGDATA: /var/lib/postgresql/data/pgdata   # Subdirectory for ext4
       secret:
-        - POSTGRES_USER
         - POSTGRES_PASSWORD
     directories:
-      - /data/db:/var/lib/postgresql/data
+      - /data/db/pgdata:/var/lib/postgresql/data
 builder:
   arch: amd64
 readiness_delay: 15
@@ -372,7 +368,6 @@ drain_timeout: 30
 
 ```
 KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD
-POSTGRES_USER=$POSTGRES_USER                       # only if db_enabled
 POSTGRES_PASSWORD=$POSTGRES_PASSWORD                 # only if db_enabled
 DATABASE_URL=$DATABASE_URL                           # only if db_enabled
 # Custom secrets from SECRET_ENV_VARS appear here:
@@ -411,10 +406,10 @@ The platform provides the following environment variables to the application con
 | Variable | Source | Description |
 |----------|--------|-------------|
 | `POSTGRES_HOST` | Clear (db internal IP) | PostgreSQL server address |
-| `POSTGRES_DB` | Clear (repo name) | Database name, derived from the repository name |
-| `POSTGRES_USER` | Secret | PostgreSQL username |
+| `POSTGRES_DB` | Clear (hardcoded `postgres`) | Database name |
+| `POSTGRES_USER` | Clear (hardcoded `postgres`) | PostgreSQL username |
 | `POSTGRES_PASSWORD` | Secret | PostgreSQL password |
-| `DATABASE_URL` | Secret | Full connection string (`postgres://user:pass@host:5432/db`) |
+| `DATABASE_URL` | Secret | Full connection string (`postgres://postgres:pass@host:5432/postgres`) |
 
 `DATABASE_URL` is composed in `.kamal/secrets` via shell variable interpolation from the individual variables, and passed to the container as a secret since it contains the password.
 
@@ -636,17 +631,16 @@ Secrets are scoped per environment. The default preview environment uses unsuffi
 | `CLOUDSTACK_API_KEY` | Global (all environments) | CloudStack API authentication |
 | `CLOUDSTACK_SECRET_KEY` | Global (all environments) | CloudStack API authentication |
 | `SSH_PRIVATE_KEY` | Per-environment (preview: unsuffixed, others: `_<ENV_NAME>`) | SSH access to VMs in the target environment |
-| `POSTGRES_USER` | Per-environment (preview: unsuffixed, others: `_<ENV_NAME>`) | PostgreSQL superuser name |
 | `POSTGRES_PASSWORD` | Per-environment (preview: unsuffixed, others: `_<ENV_NAME>`) | PostgreSQL superuser password |
 | `GITHUB_TOKEN` | Automatic (GitHub) | ghcr.io registry authentication |
 
-Example for a "production" environment: `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_USER_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`. The caller workflow maps these suffixed secrets to the reusable workflow's standard (unsuffixed) secret names.
+Example for a "production" environment: `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_PASSWORD_PRODUCTION`. The caller workflow maps these suffixed secrets to the reusable workflow's standard (unsuffixed) secret names.
 
 ### Secret handling practices
 
 - **No secrets in source control**: The `.kamal/secrets` file uses `$VAR` references that Kamal resolves from the process environment at runtime. The file is generated during the workflow run and is never committed.
 - **Per-environment SSH key isolation**: Each environment has its own SSH key pair (e.g., `~/.ssh/<repo-name>` for preview, `~/.ssh/<repo-name>-production` for production). The private key is written to a temporary file with mode 600 during the workflow run. The public key is derived at runtime using `ssh-keygen -y` (the public key is never stored as a separate secret). This ensures that compromising one environment's key does not grant access to other environments' VMs.
-- **Early validation**: When `db_enabled` is true, the workflow validates that `POSTGRES_USER` and `POSTGRES_PASSWORD` are set before any infrastructure is provisioned.
+- **Early validation**: When `db_enabled` is true, the workflow validates that `POSTGRES_PASSWORD` is set before any infrastructure is provisioned.
 - **Scoped tokens**: `GITHUB_TOKEN` is automatically provided by GitHub Actions with `packages: write` scope, limited to the current repository.
 
 ### Network security
@@ -741,7 +735,7 @@ Two complementary test suites validate the system at different levels:
 | **ghcr.io** | Container registry | GitHub Container Registry. Authentication via `GITHUB_TOKEN` eliminates the need for separate registry credentials. |
 | **Python** | Provisioning scripts | Used for infrastructure provisioning, teardown, test suite, and inline workflow scripts. Chosen for readability and availability on `ubuntu-latest` runners without installation. |
 | **Flask + gunicorn** | Sample application | Lightweight Python web framework for the sample app. gunicorn provides a production WSGI server with configurable worker count. |
-| **PostgreSQL 17** | Database | Deployed as a Kamal accessory in a Docker container on the dedicated DB VM using the official `postgres:17` image. PostgreSQL parameters (`shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`) are auto-tuned based on the selected `db_plan` size (see ADR-024). PGDATA is set to a subdirectory to handle ext4 filesystem compatibility (the `lost+found` directory in the mount root). |
+| **PostgreSQL 17 (supabase/postgres)** | Database | Deployed as a Kamal accessory in a Docker container on the dedicated DB VM using the `supabase/postgres` image with a pinned version tag (ADR-025). Bundles 60+ extensions (pgvector, pg_cron, pgmq, pg_jsonschema, etc.) out of the box. Uses `-D /etc/postgresql` to load Supabase's config. PostgreSQL parameters (`shared_buffers`, `effective_cache_size`, `work_mem`, `maintenance_work_mem`, `max_connections`) are auto-tuned based on the selected `db_plan` size (see ADR-024). The host-level `pgdata` subdirectory handles ext4 `lost+found` compatibility (ADR-007). |
 | **nip.io** | Wildcard DNS | Free wildcard DNS service. Resolves `A.B.C.D.nip.io` to `A.B.C.D`, eliminating the need for custom DNS configuration during development and testing. |
 | **Ubuntu 24.x** | VM template | Auto-discovered from the CloudStack template catalog. Provides a recent LTS base with cloud-init support. |
 

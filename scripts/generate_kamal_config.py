@@ -136,34 +136,30 @@ if workers_enabled and worker_ips:
     }
 
 if db_enabled:
-    postgres_db = repo_name
     config['env']['clear']['POSTGRES_HOST'] = db_internal_ip
-    config['env']['clear']['POSTGRES_DB'] = postgres_db
+    config['env']['clear']['POSTGRES_DB'] = 'postgres'
+    config['env']['clear']['POSTGRES_USER'] = 'postgres'
     config['env']['secret'] = [
-        'POSTGRES_USER',
         'POSTGRES_PASSWORD',
         'DATABASE_URL',
     ]
     pg_params = compute_pg_params(db_plan)
-    pg_cmd = ' '.join(f'--{k}={v}' for k, v in pg_params.items())
+    pg_cmd = 'postgres -D /etc/postgresql ' + ' '.join(
+        f'-c {k}={v}' for k, v in pg_params.items()
+    )
     config['accessories'] = {
         'db': {
-            'image': 'postgres:17',
+            'image': 'supabase/postgres:17.6.1.084',
             'host': db_ip,
             'port': '5432:5432',
             'cmd': pg_cmd,
             'env': {
-                'clear': {
-                    'POSTGRES_DB': postgres_db,
-                    'PGDATA': '/var/lib/postgresql/data/pgdata',
-                },
                 'secret': [
-                    'POSTGRES_USER',
                     'POSTGRES_PASSWORD',
                 ],
             },
             'directories': [
-                '/data/db:/var/lib/postgresql/data',
+                '/data/db/pgdata:/var/lib/postgresql/data',
             ],
         },
     }

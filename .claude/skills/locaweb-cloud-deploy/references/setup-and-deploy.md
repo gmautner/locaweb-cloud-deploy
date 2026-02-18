@@ -115,15 +115,15 @@ These credentials are issued by the Locaweb Cloud account administrator.
 
 ## Postgres Credentials
 
-Check if Postgres secrets are already set in the repo:
+Check if the Postgres password secret is already set in the repo:
 
 ```bash
 gh secret list
 ```
 
-If `POSTGRES_USER` and `POSTGRES_PASSWORD` already appear, skip this step.
+If `POSTGRES_PASSWORD` already appears, skip this step.
 
-Otherwise, ask the user for their preferred PostgreSQL username (e.g., `myapp_user`, `app`, or anything they choose).
+The database user and database name are set by the platform automatically — only the password needs to be configured as a secret.
 
 Generate a random password for **each** environment:
 
@@ -135,10 +135,10 @@ openssl rand -base64 32
 openssl rand -base64 32
 ```
 
-The default preview environment uses unsuffixed names: `POSTGRES_USER` / `POSTGRES_PASSWORD`.
+The default preview environment uses unsuffixed names: `POSTGRES_PASSWORD`.
 
 Additional environments use suffixed names matching the environment name:
-- `POSTGRES_USER_PRODUCTION` / `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
+- `POSTGRES_PASSWORD_PRODUCTION` for the "production" environment
 
 The caller workflow maps the suffixed secrets to the reusable workflow's standard secret names.
 
@@ -164,12 +164,10 @@ gh secret set SSH_PRIVATE_KEY < ~/.ssh/<repo-name>
 # SSH private key for additional environments, e.g. production (skip if already set)
 gh secret set SSH_PRIVATE_KEY_PRODUCTION < ~/.ssh/<repo-name>-production
 
-# Postgres credentials for preview (skip if already set)
-gh secret set POSTGRES_USER --body "<username chosen by user>"
+# Postgres password for preview (skip if already set)
 gh secret set POSTGRES_PASSWORD --body "<generated password>"
 
-# Postgres credentials for additional environments, e.g. production (skip if already set)
-gh secret set POSTGRES_USER_PRODUCTION --body "<username chosen by user>"
+# Postgres password for additional environments, e.g. production (skip if already set)
 gh secret set POSTGRES_PASSWORD_PRODUCTION --body "<generated password>"
 ```
 
@@ -355,7 +353,7 @@ curl -s localhost:80/up
 docker logs kamal-proxy --tail 50
 
 # Check Postgres container logs (database VM only)
-docker logs $(docker ps -q --filter "ancestor=postgres:16") --tail 100
+docker logs <repo-name>-db --tail 100
 
 # Check disk mounts
 df -h /data/blobs    # web VM

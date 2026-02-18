@@ -1,6 +1,6 @@
 # ADR-023: Switch to supabase/postgres with Automated Tag Resolution
 
-**Status:** Rejected
+**Status:** Rejected (see ADR-025 for revised approach)
 **Date:** 2026-02-17
 
 ## Context

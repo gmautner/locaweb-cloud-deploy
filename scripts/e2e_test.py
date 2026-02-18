@@ -345,15 +345,13 @@ class SSHVerifier:
         """Get a PostgreSQL setting value from inside a running container.
 
         Runs `SHOW <setting>` via psql and returns the trimmed value,
-        or None on failure.  Uses bash -c inside the container so that
-        $POSTGRES_USER and $POSTGRES_DB are expanded from the container's
-        environment.
+        or None on failure.  Uses hardcoded postgres user/db since inline with the supabase/postgres image.
         """
         rc, stdout, _ = self.run_command(
             ip,
             f"docker exec {container} "
-            f"bash -c 'psql -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" "
-            f"-At -c \"SHOW {setting};\"'")
+            f"psql -U postgres -d postgres "
+            f"-At -c \"SHOW {setting};\"")
         if rc == 0 and stdout.strip():
             return stdout.strip()
         return None

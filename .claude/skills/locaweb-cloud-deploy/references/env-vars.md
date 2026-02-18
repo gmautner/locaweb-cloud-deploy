@@ -2,12 +2,14 @@
 
 ## Table of Contents
 
-- [Platform-Provided Variables](#platform-provided-variables)
-- [Custom Clear Variables (ENV_VARS)](#custom-clear-variables-env_vars)
-- [Custom Secret Variables (SECRET_ENV_VARS)](#custom-secret-variables-secret_env_vars)
-- [Passing Variables in Caller Workflows](#passing-variables-in-caller-workflows)
-- [Database Connection Variables](#database-connection-variables)
-- [Blob Storage Path](#blob-storage-path)
+- [Environment Variables and Secrets Configuration](#environment-variables-and-secrets-configuration)
+  - [Table of Contents](#table-of-contents)
+  - [Platform-Provided Variables](#platform-provided-variables)
+  - [Custom Clear Variables (ENV\_VARS)](#custom-clear-variables-env_vars)
+  - [Custom Secret Variables (SECRET\_ENV\_VARS)](#custom-secret-variables-secret_env_vars)
+  - [Passing Variables in Caller Workflows](#passing-variables-in-caller-workflows)
+  - [Database Connection Variables](#database-connection-variables)
+  - [Blob Storage Path](#blob-storage-path)
 
 ## Platform-Provided Variables
 
@@ -16,10 +18,10 @@ The platform automatically injects these into the application container. Do not 
 | Variable | Type | Condition | Value |
 |----------|------|-----------|-------|
 | `POSTGRES_HOST` | clear | `db_enabled: true` | DB VM internal (private) IP |
-| `POSTGRES_DB` | clear | `db_enabled: true` | Repository name (e.g., `my-app`) |
-| `POSTGRES_USER` | secret | `db_enabled: true` | From `POSTGRES_USER` secret |
+| `POSTGRES_DB` | clear | `db_enabled: true` | Hardcoded to `postgres` |
+| `POSTGRES_USER` | clear | `db_enabled: true` | Hardcoded to `postgres` |
 | `POSTGRES_PASSWORD` | secret | `db_enabled: true` | From `POSTGRES_PASSWORD` secret |
-| `DATABASE_URL` | secret | `db_enabled: true` | `postgres://<user>:<password>@<host>:5432/<db>` |
+| `DATABASE_URL` | secret | `db_enabled: true` | `postgres://postgres:<password>@<host>:5432/postgres` |
 | `BLOB_STORAGE_PATH` | clear | always | `/data/blobs` |
 
 ## Custom Clear Variables (ENV_VARS)
@@ -92,7 +94,6 @@ jobs:
       CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
       CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
       SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
-      POSTGRES_USER: ${{ secrets.POSTGRES_USER_PRODUCTION }}
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD_PRODUCTION }}
       SECRET_ENV_VARS: |-
         API_KEY=${{ secrets.API_KEY_PRODUCTION }}
@@ -134,7 +135,7 @@ production:
   url: <%= ENV["DATABASE_URL"] %>
 ```
 
-The database name (`POSTGRES_DB`) is automatically set to the repository name. The port is always 5432.
+The port is always 5432.
 
 ## Blob Storage Path
 

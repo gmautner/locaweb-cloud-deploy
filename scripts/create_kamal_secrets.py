@@ -28,7 +28,6 @@ lines = [
     'KAMAL_REGISTRY_PASSWORD=$KAMAL_REGISTRY_PASSWORD',
 ]
 if db_enabled:
-    lines.append('POSTGRES_USER=$POSTGRES_USER')
     lines.append('POSTGRES_PASSWORD=$POSTGRES_PASSWORD')
     lines.append('DATABASE_URL=$DATABASE_URL')
 for name in custom_secrets:
