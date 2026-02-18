@@ -379,6 +379,31 @@ jobs:
           source /tmp/kamal_custom_secrets.env
           kamal setup
 
+      - name: Reboot DB accessory if tuning changed
+        if: inputs.db_enabled
+        env:
+          KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          POSTGRES_HOST: ${{ steps.outputs.outputs.db_internal_ip }}
+          POSTGRES_DB: ${{ github.event.repository.name }}
+          DB_IP: ${{ steps.outputs.outputs.db_ip }}
+          REPO_NAME: ${{ github.event.repository.name }}
+        run: |
+          export DATABASE_URL="postgres://$POSTGRES_USER:$POSTGRES_PASSWORD@$POSTGRES_HOST:5432/$POSTGRES_DB"
+          source /tmp/kamal_custom_secrets.env
+          desired_cmd=$(python3 -c "import yaml; c=yaml.safe_load(open('config/deploy.yml')); print(c.get('accessories',{}).get('db',{}).get('cmd',''))")
+          current_cmd=$(ssh -i .kamal/ssh_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            root@"$DB_IP" "docker inspect --format '{{join .Config.Cmd \" \"}}' ${REPO_NAME}-db" 2>/dev/null || echo "")
+          if [ "$desired_cmd" != "$current_cmd" ]; then
+            echo "PostgreSQL tuning parameters changed, rebooting DB accessory..."
+            echo "  Current: $current_cmd"
+            echo "  Desired: $desired_cmd"
+            kamal accessory reboot db
+          else
+            echo "PostgreSQL tuning parameters unchanged, skipping reboot."
+          fi
+
       - name: Print Kamal deployment summary
         env:
           INPUT_DOMAIN: ${{ inputs.domain }}

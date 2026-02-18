@@ -341,6 +341,21 @@ class SSHVerifier:
             return stdout
         return None
 
+    def get_pg_setting(self, ip, container, setting):
+        """Get a PostgreSQL setting value from inside a running container.
+
+        Runs `SHOW <setting>` via psql and returns the trimmed value,
+        or None on failure.  Uses bash -c inside the container so that
+        $POSTGRES_USER is expanded from the container's environment.
+        """
+        rc, stdout, _ = self.run_command(
+            ip,
+            f"docker exec {container} "
+            f"bash -c 'psql -U \"$POSTGRES_USER\" -At -c \"SHOW {setting};\"'")
+        if rc == 0 and stdout.strip():
+            return stdout.strip()
+        return None
+
     def get_block_device_size(self, ip, mount_path):
         """Get the raw block device size in bytes for a given mount point.
 
@@ -975,6 +990,24 @@ class E2ETestRunner:
                 s.assert_equal(db_size, 20 * 1024**3,
                                "DB disk initial size is 20GB")
 
+                # Verify PG tuning for 'small' plan (2 GiB RAM)
+                db_container = f"{REPO_NAME}-db"
+                sb = self.ssh.get_pg_setting(db_ip, db_container, "shared_buffers")
+                s.assert_equal(sb, "512MB",
+                               "PG shared_buffers is 512MB (small plan)")
+                ecs = self.ssh.get_pg_setting(db_ip, db_container, "effective_cache_size")
+                s.assert_equal(ecs, "1536MB",
+                               "PG effective_cache_size is 1536MB (small plan)")
+                wm = self.ssh.get_pg_setting(db_ip, db_container, "work_mem")
+                s.assert_equal(wm, "5MB",
+                               "PG work_mem is 5MB (small plan)")
+                mwm = self.ssh.get_pg_setting(db_ip, db_container, "maintenance_work_mem")
+                s.assert_equal(mwm, "128MB",
+                               "PG maintenance_work_mem is 128MB (small plan)")
+                mc = self.ssh.get_pg_setting(db_ip, db_container, "max_connections")
+                s.assert_equal(mc, "100",
+                               "PG max_connections is 100 (small plan)")
+
             # Verify the single worker has env vars
             if worker_ips:
                 wip = worker_ips[0]
@@ -1056,6 +1089,24 @@ class E2ETestRunner:
                 db_size2 = self.ssh.get_block_device_size(db_ip2, "/data/db")
                 s.assert_equal(db_size2, 30 * 1024**3,
                                "DB disk grew to 30GB after scale")
+
+                # Verify PG tuning changed to 'medium' plan (4 GiB RAM)
+                db_container = f"{REPO_NAME}-db"
+                sb = self.ssh.get_pg_setting(db_ip2, db_container, "shared_buffers")
+                s.assert_equal(sb, "1GB",
+                               "PG shared_buffers is 1GB (medium plan)")
+                ecs = self.ssh.get_pg_setting(db_ip2, db_container, "effective_cache_size")
+                s.assert_equal(ecs, "3GB",
+                               "PG effective_cache_size is 3GB (medium plan)")
+                wm = self.ssh.get_pg_setting(db_ip2, db_container, "work_mem")
+                s.assert_equal(wm, "10MB",
+                               "PG work_mem is 10MB (medium plan)")
+                mwm = self.ssh.get_pg_setting(db_ip2, db_container, "maintenance_work_mem")
+                s.assert_equal(mwm, "256MB",
+                               "PG maintenance_work_mem is 256MB (medium plan)")
+                mc = self.ssh.get_pg_setting(db_ip2, db_container, "max_connections")
+                s.assert_equal(mc, "100",
+                               "PG max_connections is 100 (medium plan)")
 
             # App still works after scale
             http2 = HTTPVerifier(web_ip2)
