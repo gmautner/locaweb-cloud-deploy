@@ -57,6 +57,21 @@ def cmk(*args):
             return None
 
 
+def find_keypair(name):
+    """Check if an SSH key pair exists."""
+    data = cmk("list", "sshkeypairs", f"name={name}")
+    return bool(data and data.get("sshkeypair"))
+
+
+def delete_keypair(name):
+    """Delete an SSH key pair if it exists."""
+    if not find_keypair(name):
+        print(f"  Already deleted: {name}")
+        return
+    cmk("delete", "sshkeypair", f"name={name}")
+    print(f"  Deleted {name}")
+
+
 def resolve_zone(zone_name):
     """Resolve zone name to ID."""
     data = cmk("list", "zones", f"name={zone_name}", "filter=id,name")
@@ -92,8 +107,7 @@ def teardown(network_name, zone_id=None):
         print(f"  Network '{network_name}' not found{zone_hint}. Nothing to tear down.")
         # Still try to delete the keypair (it's zone-independent)
         print("[8/8] Deleting SSH key pair...")
-        cmk("delete", "sshkeypair", f"name={keypair_name}")
-        print(f"  Deleted {keypair_name}")
+        delete_keypair(keypair_name)
         return
 
     for net in matching_networks:
@@ -180,8 +194,7 @@ def teardown(network_name, zone_id=None):
 
     # 8. Delete SSH key pair (once, after all networks are cleaned up)
     print("[8/8] Deleting SSH key pair...")
-    cmk("delete", "sshkeypair", f"name={keypair_name}")
-    print(f"  Deleted {keypair_name}")
+    delete_keypair(keypair_name)
 
     print(f"\n{'='*60}")
     print("Teardown complete!")
