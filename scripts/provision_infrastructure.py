@@ -281,25 +281,21 @@ def deploy_vm(name, offering_id, template_id, zone_id, net_id, keypair_name,
 def scale_vm(vm_id, name, new_offering_id):
     """Scale a VM to a new service offering (in-place).
 
-    Attempts a live scale first.  If that fails (e.g. the offering
-    requires a different CPU/RAM family), falls back to stop → scale → start.
+    Stops the VM first, scales, then starts it again.  Hot (live) scaling
+    is not attempted because CloudStack rejects it for fixed service
+    offerings, which is always our case.
     """
-    try:
-        cmk("scale", "virtualmachine",
-            f"id={vm_id}", f"serviceofferingid={new_offering_id}")
-        print(f"  Scaled: {name} (live)")
-    except RuntimeError:
-        print(f"  Live scale failed, stopping VM for offline scale...")
-        cmk("stop", "virtualmachine", f"id={vm_id}")
-        for _ in range(30):  # wait up to ~150s
-            vm = find_vm(name)
-            if vm and vm.get("state") == "Stopped":
-                break
-            time.sleep(5)
-        cmk("scale", "virtualmachine",
-            f"id={vm_id}", f"serviceofferingid={new_offering_id}")
-        cmk("start", "virtualmachine", f"id={vm_id}")
-        print(f"  Scaled: {name} (offline — stopped, scaled, started)")
+    print(f"  Stopping VM for offline scale...")
+    cmk("stop", "virtualmachine", f"id={vm_id}")
+    for _ in range(30):  # wait up to ~150s
+        vm = find_vm(name)
+        if vm and vm.get("state") == "Stopped":
+            break
+        time.sleep(5)
+    cmk("scale", "virtualmachine",
+        f"id={vm_id}", f"serviceofferingid={new_offering_id}")
+    cmk("start", "virtualmachine", f"id={vm_id}")
+    print(f"  Scaled: {name} (offline — stopped, scaled, started)")
 
 
 def resize_volume(vol, desired_gb, desc):

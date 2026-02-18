@@ -17,7 +17,7 @@ CloudStack provides APIs for in-place changes:
 
 Enhance the provisioning logic to detect and apply configuration changes to existing resources:
 
-1. **VM Scaling:** When an existing VM's `serviceofferingid` differs from the desired offering, call `scaleVirtualMachine`. Attempt live scaling first; if that fails (e.g., cross-family change), fall back to stop → scale → start.
+1. **VM Scaling:** When an existing VM's `serviceofferingid` differs from the desired offering, stop the VM, call `scaleVirtualMachine`, then start it again. Hot (live) scaling is not attempted because CloudStack rejects it for fixed service offerings, which is always our case.
 2. **Disk Resize (grow only):** When an existing volume's `size` is smaller than the desired size, call `resizeVolume`. If the desired size is smaller than the current size, fail with an error — shrinking is not supported by CloudStack and would cause data loss.
 3. **No-op on match:** When the offering and disk size already match, the existing skip behavior is preserved.
 
@@ -30,10 +30,10 @@ The `find_vm` helper now returns a full VM dict (including `serviceofferingid`) 
 - Users can change VM plans without teardown/redeploy, reducing downtime.
 - Disk growth is non-destructive — existing data is preserved.
 - Explicit rejection of disk shrink prevents accidental data loss.
-- The live-scale-then-fallback approach minimizes downtime for compatible offering changes.
+- Going directly to offline scaling avoids wasted time on failed hot-scale attempts and retries.
 
 **Negative:**
 
-- Offline scaling (stop → scale → start) introduces brief downtime for the affected VM. This is unavoidable for cross-family offering changes in CloudStack.
+- Offline scaling (stop → scale → start) introduces brief downtime for every VM scaling operation. This is unavoidable given that CloudStack rejects live scaling for fixed service offerings, which is always our case.
 - The script now makes additional API calls to compare current vs. desired state, slightly increasing provisioning time even when no changes are needed.
 - Disk resize is grow-only. Users who need to shrink a disk must still teardown and redeploy (or manually manage the volume outside the tool).
