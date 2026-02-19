@@ -7,8 +7,11 @@ description: >
   caller workflows, (3) configure secrets and environment variables for Locaweb Cloud deployment,
   (4) write or adapt a Dockerfile for the platform, (5) understand deployment outputs like IPs and
   URLs, (6) set up DNS for custom domains, (7) scale VMs, workers, or disk sizes, (8) tear down
-  deployed environments, (9) troubleshoot deployment issues. Triggers on keywords: Locaweb, deploy,
-  teardown, CloudStack, Kamal, nip.io, Locaweb Cloud, env_name, preview, production environment.
+  deployed environments, (9) troubleshoot deployment issues, (10) connect to deployed VMs via SSH,
+  (11) access the PostgreSQL database, (12) debug running containers and view logs.
+  Triggers on keywords: Locaweb, deploy, teardown, CloudStack, Kamal, nip.io, Locaweb Cloud,
+  env_name, preview, production environment, SSH, database, psql, connect, logs, debug, VM,
+  IP address, provision-output, container.
 ---
 
 # Locaweb Cloud Deploy
@@ -139,6 +142,19 @@ After setup is complete, use this cycle to deploy and iterate on the application
 - Use Playwright for browser-based verification (see [references/setup-and-deploy.md](references/setup-and-deploy.md) for setup)
 - If the app doesn't work: SSH into the VMs to check logs (use the locally saved SSH key and the public IPs from the workflow output), diagnose, fix source code, commit/push, and repeat the deploy cycle
 - Continue until the app works correctly
+
+## Operations (Post-Deployment)
+
+Quick reference for interacting with deployed infrastructure. See [references/operations.md](references/operations.md) for full details.
+
+| Task | Command pattern |
+|---|---|
+| Get deployment IPs | `rm -rf /tmp/provision-output && gh run download <run-id> --name provision-output --dir /tmp/provision-output` |
+| SSH into a VM | `ssh -i ~/.ssh/<repo-name>[-<env_name>] root@<ip>` |
+| Connect to database | SSH into DB VM → `docker exec -it <repo-name>-db psql -U postgres` |
+| View app logs | SSH into web VM → `docker logs $(docker ps -q --filter "label=service=<repo-name>") --tail 100` |
+| Check app health | `curl -s http://<web_ip>.nip.io/up` |
+| Shell into app container | SSH into web VM → `docker exec -it $(docker ps -q --filter "label=service=<repo-name>") sh` |
 
 ## Dockerfile Requirements
 
@@ -272,6 +288,7 @@ When the developer cannot run the language runtime or database locally:
 
 ## References
 
+- **[references/operations.md](references/operations.md)** -- Post-deployment operations: finding IPs, SSH access, database access, container debugging
 - **[references/setup-and-deploy.md](references/setup-and-deploy.md)** -- Detailed commands for each setup step, development routine, and SSH debugging
 - **[references/workflows.md](references/workflows.md)** -- Complete caller workflow examples (deploy + teardown) with all inputs documented
 - **[references/env-vars.md](references/env-vars.md)** -- Environment variables and secrets configuration
