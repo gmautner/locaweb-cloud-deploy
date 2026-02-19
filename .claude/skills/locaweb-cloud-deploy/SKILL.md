@@ -24,13 +24,14 @@ These constraints apply to **every** application deployed to this platform. Comm
 - **Single Dockerfile at repo root**, web app **must listen on port 80**
 - **Health check at `GET /up`** returning HTTP 200 when healthy
 - **Postgres only** (with 60+ bundled extensions via `supabase/postgres`): No Redis, Kafka, or other services. If the app framework expects these features, find or implement a Postgres-backed alternative using the bundled extensions:
-  - **Queues**: `pgmq` extension (CREATE EXTENSION pgmq) — lightweight message queue with `pgmq.send()`, `pgmq.read()`, `pgmq.delete()`
-  - **Pub/sub**: Native `LISTEN`/`NOTIFY`
-  - **Scheduling**: `pg_cron` extension — in-database cron (`SELECT cron.schedule(...)`)
-  - **Search**: Native full-text search (`tsvector`/`tsquery`) or `pgroonga` extension for multilingual/CJK
-  - **Vector database**: `pgvector` extension — embeddings storage and similarity search (`vector` type, `<->` operator)
-  - **JSON validation**: `pg_jsonschema` extension
-  - Other notable extensions: `pgjwt`, `pg_stat_statements`, `pgaudit`, `postgis`, `pg_hashids`
+  - **Queues**: `pgmq` extension — lightweight message queue with visibility timeout, archive, and batch operations. See [references/pgmq.md](references/pgmq.md)
+  - **Pub/sub**: Native `LISTEN`/`NOTIFY` — no extension needed. Producers call `NOTIFY channel, 'payload'` (max 8 KB payload), consumers hold a connection with `LISTEN channel` and receive events asynchronously. Useful for cache invalidation, real-time triggers, and lightweight event buses. Not durable — messages are lost if no listener is connected. For durable messaging, use `pgmq` instead.
+  - **Scheduling**: `pg_cron` extension — in-database cron using background workers. See [references/pg-cron.md](references/pg-cron.md)
+  - **Search**: Native full-text search (`tsvector`/`tsquery`) for well-supported languages, or `pgroonga` extension for multilingual/CJK support. See [references/pgroonga.md](references/pgroonga.md)
+  - **Vector database**: `pgvector` extension — embeddings storage and similarity search with HNSW and IVFFlat indexes. See [references/pgvector.md](references/pgvector.md)
+  - **JSON validation**: `pg_jsonschema` extension — validate `json`/`jsonb` columns against JSON Schema via CHECK constraints. See [references/pg-jsonschema.md](references/pg-jsonschema.md)
+  - **Geospatial**: `postgis` extension — geometry types, spatial indexes, and geographic functions. See <https://postgis.net/>
+  - Other notable extensions: `pgjwt`, `pg_stat_statements`, `pgaudit`, `pg_hashids`
 - **Single web VM**: No horizontal web scaling. Scale vertically with larger `web_plan`. Prefer runtimes and frameworks that scale well vertically.
 - **No TLS without a domain**: nip.io URLs are HTTP only. Use a custom domain for HTTPS.
 - **Single PostgreSQL instance**: No read replicas or multiple databases.
@@ -276,3 +277,8 @@ When the developer cannot run the language runtime or database locally:
 - **[references/env-vars.md](references/env-vars.md)** -- Environment variables and secrets configuration
 - **[references/scaling.md](references/scaling.md)** -- VM plans, worker scaling, disk sizes
 - **[references/teardown.md](references/teardown.md)** -- Teardown process, inferring parameters, reading outputs
+- **[references/pgmq.md](references/pgmq.md)** -- pgmq message queue: SQL examples for send, read, archive, delete
+- **[references/pg-cron.md](references/pg-cron.md)** -- pg_cron job scheduling: syntax, common patterns, job management
+- **[references/pgroonga.md](references/pgroonga.md)** -- PGroonga full-text search: operators, ranking, highlighting, CJK support
+- **[references/pgvector.md](references/pgvector.md)** -- pgvector similarity search: distance operators, HNSW/IVFFlat indexes, tuning
+- **[references/pg-jsonschema.md](references/pg-jsonschema.md)** -- pg_jsonschema validation: CHECK constraint pattern, core functions
