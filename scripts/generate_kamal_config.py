@@ -122,6 +122,10 @@ config = {
     ],
     'builder': {
         'arch': 'amd64',
+        'cache': {
+            'type': 'gha',
+            'options': 'mode=max',
+        },
     },
     'readiness_delay': 15,
     'deploy_timeout': 180,

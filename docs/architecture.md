@@ -1,7 +1,7 @@
 # Architecture Design Document -- locaweb-cloud-deploy
 
 **Status:** Living document
-**Last updated:** 2026-02-17
+**Last updated:** 2026-02-19
 
 ---
 
@@ -136,20 +136,25 @@ A single-job reusable workflow that provisions infrastructure and deploys the ap
 1. **Validate secrets** -- If `db_enabled` is true, verifies that the `POSTGRES_PASSWORD` secret exists. Fails fast if missing.
 2. **Checkout application repository** -- `actions/checkout@v4` retrieves the caller's code (or this repo in internal mode).
 2b. **Checkout infrastructure scripts** -- `actions/checkout@v4` with `repository: gmautner/locaweb-cloud-deploy` and `path: _infra`.
-3. **Build configuration** -- Inline Python assembles workflow inputs into a JSON config file at `/tmp/config.json`.
-4. **Extract SSH public key** -- Derives the public key from the `SSH_PRIVATE_KEY` secret using `ssh-keygen -y`.
-5. **Install CloudMonkey** -- Downloads the `cmk` binary, configures it with the CloudStack API endpoint (`painel-cloud.locaweb.com.br`), API key, and secret key. Runs `cmk sync` to populate the local API cache.
-6. **Provision infrastructure** -- Runs `scripts/provision_infrastructure.py` with the config JSON and public key. Outputs JSON to `/tmp/provision-output.json`.
-7. **Set outputs** -- Parses the provision output JSON and writes `web_ip`, `worker_ips`, `db_ip`, and `db_internal_ip` to `GITHUB_OUTPUT` for downstream consumption.
-8. **Upload artifact** -- Saves the provision output JSON as a GitHub artifact with 90-day retention.
-9. **Print summary** -- Generates a Markdown table of provisioned resources in the GitHub Actions step summary.
-10. **Install Kamal** -- `gem install kamal` (Kamal 2 from RubyGems).
-11. **Prepare SSH key** -- Copies the private key to `.kamal/ssh_key` with mode 600.
-12. **Create secrets file and env vars** -- Writes `.kamal/secrets` with `$VAR` references for `KAMAL_REGISTRY_PASSWORD`, and conditionally `POSTGRES_PASSWORD` and `DATABASE_URL` (if `db_enabled`). Parses the `SECRET_ENV_VARS` secret and `ENV_VARS` variable (both in dotenv format) using `python-dotenv`: secrets are added as `$VAR` references in `.kamal/secrets` and their resolved values are written to a sourceable env file for the deploy step; variables are written to a JSON file for the config generation step to merge as clear env vars.
-13. **Generate deploy config** -- Inline Python dynamically generates `config/deploy.yml` (the Kamal configuration) from the provision output, incorporating conditional sections for workers and database accessories. When the `domain` input is set, the proxy host is set to the domain and SSL is enabled via Let's Encrypt; otherwise, nip.io wildcard DNS is used with SSL disabled. Merges any custom variables from `ENV_VARS` as clear env vars and custom secrets from `SECRET_ENV_VARS` as secret env vars.
-14. **Deploy with Kamal** -- Runs `kamal setup`, which handles Docker installation on all hosts, registry authentication, image build and push, accessory boot (PostgreSQL), and application deployment behind kamal-proxy.
-15. **Reboot DB accessory if tuning changed** -- (Only when `db_enabled`) Compares the desired PostgreSQL `cmd` from the generated config against the running container's command via `docker inspect`. If the parameters differ (i.e., `db_plan` changed since the last deploy), runs `kamal accessory reboot db` to recreate the container with updated tuning. Skipped on first deploy (container was just created with correct parameters) and when the plan hasn't changed. This is necessary because `kamal setup` skips existing accessory containers, and Docker's `--restart unless-stopped` policy preserves the original command even across VM reboots.
-16. **Print deployment summary** -- Outputs commit SHA, image tag, application URL, and health check URL to the step summary.
+3. **Compute infrastructure cache key** -- Hashes `toJSON(inputs)` via `sha256sum` to produce a deterministic cache key that captures every workflow input.
+4. **Cache infrastructure state** -- Uses `actions/cache@v4` to cache `/tmp/provision-output.json` keyed by `infra-{repository}-{env_name}-{hash}`. Bypassed when `recover: true`. On cache hit, steps 5-8 and 11 are skipped (see ADR-026).
+5. **Build configuration** *(skipped on cache hit)* -- Inline Python assembles workflow inputs into a JSON config file at `/tmp/config.json`.
+6. **Extract SSH public key** -- Derives the public key from the `SSH_PRIVATE_KEY` secret using `ssh-keygen -y`.
+7. **Install CloudMonkey** *(skipped on cache hit)* -- Downloads the `cmk` binary, configures it with the CloudStack API endpoint (`painel-cloud.locaweb.com.br`), API key, and secret key. Runs `cmk sync` to populate the local API cache.
+8. **Provision infrastructure** *(skipped on cache hit)* -- Runs `scripts/provision_infrastructure.py` with the config JSON and public key. Outputs JSON to `/tmp/provision-output.json`.
+9. **Set outputs** -- Parses the provision output JSON (freshly created or restored from cache) and writes `web_ip`, `worker_ips`, `db_ip`, and `db_internal_ip` to `GITHUB_OUTPUT` for downstream consumption.
+10. **Upload artifact** -- Saves the provision output JSON as a GitHub artifact with 90-day retention.
+10b. **Print summary** -- Generates a Markdown table of provisioned resources in the GitHub Actions step summary.
+11. **Configure unattended upgrades** *(skipped on cache hit)* -- SSHes into all VMs and writes apt unattended-upgrades configuration.
+12. **Configure gem path + Cache Kamal gem** -- Sets `GEM_HOME=~/.gems` and adds `~/.gems/bin` to `PATH` for all subsequent steps. Uses `actions/cache@v4` to cache the gem directory with key `kamal-{runner.os}-v1`.
+13. **Install Kamal** *(skipped on gem cache hit)* -- `gem install kamal` (Kamal 2 from RubyGems).
+13b. **Verify Kamal** -- Runs `kamal version` to confirm the binary works.
+14. **Prepare SSH key** -- Copies the private key to `.kamal/ssh_key` with mode 600.
+15. **Create secrets file and env vars** -- Writes `.kamal/secrets` with `$VAR` references for `KAMAL_REGISTRY_PASSWORD`, and conditionally `POSTGRES_PASSWORD` and `DATABASE_URL` (if `db_enabled`). Parses the `SECRET_ENV_VARS` secret and `ENV_VARS` variable (both in dotenv format) using `python-dotenv`: secrets are added as `$VAR` references in `.kamal/secrets` and their resolved values are written to a sourceable env file for the deploy step; variables are written to a JSON file for the config generation step to merge as clear env vars.
+16. **Generate deploy config** -- Inline Python dynamically generates `config/deploy.yml` (the Kamal configuration) from the provision output, incorporating conditional sections for workers and database accessories. When the `domain` input is set, the proxy host is set to the domain and SSL is enabled via Let's Encrypt; otherwise, nip.io wildcard DNS is used with SSL disabled. Merges any custom variables from `ENV_VARS` as clear env vars and custom secrets from `SECRET_ENV_VARS` as secret env vars.
+17. **Deploy with Kamal** -- On first deploy (infrastructure cache miss), runs `kamal setup`, which installs Docker on all hosts, boots accessories (PostgreSQL), and deploys the application. On consecutive deploys (cache hit), runs `kamal deploy`, which skips Docker installation and accessory bootstrapping, only building and deploying the new application image. Both modes handle registry authentication, image build and push, and deployment behind kamal-proxy.
+18. **Reboot DB accessory if tuning changed** -- (Only when `db_enabled`) Compares the desired PostgreSQL `cmd` from the generated config against the running container's command via `docker inspect`. If the parameters differ (i.e., `db_plan` changed since the last deploy), runs `kamal accessory reboot db` to recreate the container with updated tuning. Skipped on first deploy (container was just created with correct parameters) and when the plan hasn't changed. This is necessary because `kamal setup` skips existing accessory containers, and Docker's `--restart unless-stopped` policy preserves the original command even across VM reboots.
+19. **Print deployment summary** -- Outputs commit SHA, image tag, application URL, and health check URL to the step summary.
 
 #### teardown.yml
 
@@ -498,25 +503,28 @@ The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker s
    |
    +-- Checks out caller's application code (Dockerfile, source)
    +-- Checks out infrastructure scripts into _infra/
-   +-- Assembles JSON config from workflow inputs
-   +-- Extracts SSH public key from private key secret
-   +-- Installs and configures CloudMonkey (cmk)
+   +-- Computes infrastructure cache key (SHA-256 of all inputs)
+   +-- Checks cache for provision-output.json
    |
    v
-3. Provision infrastructure (cmk -> CloudStack API)
+3. [CACHE MISS] Provision infrastructure (cmk -> CloudStack API)
+   |  (skipped on cache hit -- provision-output.json restored from cache)
    |
+   +-- Assembles JSON config from workflow inputs
+   +-- Installs and configures CloudMonkey (cmk)
    +-- Creates network, keypair
    +-- Deploys VMs with cloud-init userdata
    +-- Assigns public IPs, static NAT, firewall rules
    +-- Creates and attaches data disks
    +-- Sets up daily snapshot policies
+   +-- Configures unattended upgrades on all VMs
    +-- Outputs JSON: {IPs, VM IDs, volume IDs}
    |
    v
-4. Generate Kamal config from provision output
+4. Generate Kamal config from provision output (cached or fresh)
    |
    v
-5. kamal setup (SSH -> each VM)
+5a. [FIRST DEPLOY] kamal setup (SSH -> each VM)
    |
    +-- Installs Docker on all hosts
    +-- Logs into ghcr.io registry
@@ -524,6 +532,15 @@ The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker s
    +-- Pushes image to ghcr.io/<owner>/<repo>:<sha>
    +-- Boots postgres accessory on DB VM (if enabled)
    +-- Deploys web container behind kamal-proxy
+   +-- Deploys worker containers (if enabled)
+   |
+5b. [CONSECUTIVE DEPLOY] kamal deploy (SSH -> each VM)
+   |  (Docker already installed, accessories already running)
+   |
+   +-- Logs into ghcr.io registry
+   +-- Builds Docker image (amd64)
+   +-- Pushes image to ghcr.io/<owner>/<repo>:<sha>
+   +-- Deploys web container behind kamal-proxy (zero-downtime swap)
    +-- Deploys worker containers (if enabled)
    |
    v
