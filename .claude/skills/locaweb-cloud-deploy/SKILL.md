@@ -1,17 +1,12 @@
 ---
 name: locaweb-cloud-deploy
 description: >
-  Deploy containerized web applications to Locaweb Cloud using reusable GitHub Actions workflows
-  from gmautner/locaweb-cloud-deploy. Use this skill when an agent or user needs to: (1) set up a
-  repository for deployment to Locaweb Cloud, (2) create or modify GitHub Actions deploy/teardown
-  caller workflows, (3) configure secrets and environment variables for Locaweb Cloud deployment,
-  (4) write or adapt a Dockerfile for the platform, (5) understand deployment outputs like IPs and
-  URLs, (6) set up DNS for custom domains, (7) scale VMs, workers, or disk sizes, (8) tear down
-  deployed environments, (9) troubleshoot deployment issues, (10) connect to deployed VMs via SSH,
-  (11) access the PostgreSQL database, (12) debug running containers and view logs.
-  Triggers on keywords: Locaweb, deploy, teardown, CloudStack, Kamal, nip.io, Locaweb Cloud,
-  env_name, preview, production environment, SSH, database, psql, connect, logs, debug, VM,
-  IP address, provision-output, container.
+  Use this skill to decide on the architecture of the app (monolith vs microservices, single
+  container, horizontal and vertical scaling), choose accessories (databases, queues, caches, search, pub/sub,
+  scheduling, file and blob storage), set up deployment (GitHub Actions workflows, container image,
+  secrets, environment variables, DNS, cloud infrastructure, teardown), and perform operations
+  and troubleshooting on live infrastructure (connection to VMs and containers, accessing and querying the database, retrieving
+  logs, health checks).
 ---
 
 # Locaweb Cloud Deploy
@@ -29,11 +24,12 @@ These constraints apply to **every** application deployed to this platform. Comm
 - **Postgres only** (with 60+ bundled extensions via `supabase/postgres`): No Redis, Kafka, or other services. If the app framework expects these features, find or implement a Postgres-backed alternative using the bundled extensions:
   - **Queues**: `pgmq` extension — lightweight message queue with visibility timeout, archive, and batch operations. See [references/pgmq.md](references/pgmq.md)
   - **Pub/sub**: Native `LISTEN`/`NOTIFY` — no extension needed. Producers call `NOTIFY channel, 'payload'` (max 8 KB payload), consumers hold a connection with `LISTEN channel` and receive events asynchronously. Useful for cache invalidation, real-time triggers, and lightweight event buses. Not durable — messages are lost if no listener is connected. For durable messaging, use `pgmq` instead.
-  - **Scheduling**: `pg_cron` extension — in-database cron using background workers. See [references/pg-cron.md](references/pg-cron.md)
+  - **Scheduling**: `pg_cron` extension — in-database cron using background workers. Combine with `pg_net` to fire HTTP requests to the app on a schedule (e.g., trigger a cleanup endpoint every 5 minutes). **Do not use container-level cron** (`apt-get install cron`, crontab files) — use `pg_cron` + `pg_net` for all scheduled tasks. See [references/pg-cron.md](references/pg-cron.md)
   - **Search**: Native full-text search (`tsvector`/`tsquery`) for well-supported languages, or `pgroonga` extension for multilingual/CJK support. See [references/pgroonga.md](references/pgroonga.md)
   - **Vector database**: `pgvector` extension — embeddings storage and similarity search with HNSW and IVFFlat indexes. See [references/pgvector.md](references/pgvector.md)
   - **JSON validation**: `pg_jsonschema` extension — validate `json`/`jsonb` columns against JSON Schema via CHECK constraints. See [references/pg-jsonschema.md](references/pg-jsonschema.md)
   - **Geospatial**: `postgis` extension — geometry types, spatial indexes, and geographic functions. See <https://postgis.net/>
+  - **HTTP from SQL**: `pg_net` extension — asynchronous HTTP/HTTPS requests from SQL. Used with `pg_cron` to call app endpoints on a schedule, or from triggers to fire webhooks. See [references/pg-cron.md](references/pg-cron.md)
   - Other notable extensions: `pgjwt`, `pg_stat_statements`, `pgaudit`, `pg_hashids`
 - **Single web VM**: No horizontal web scaling. Scale vertically with larger `web_plan`. Prefer runtimes and frameworks that scale well vertically.
 - **No TLS without a domain**: nip.io URLs are HTTP only. Use a custom domain for HTTPS.
@@ -192,51 +188,6 @@ The agent must ensure that:
 1. **Migration commands run in the entrypoint** — before the web server process starts. The app should not serve requests until migrations complete.
 2. **All migration dependencies are bundled in the Docker image** — SQL scripts, migration files, and any libraries used by the migration tool (e.g., `alembic`, `django`, `knex`, `ActiveRecord`) must be installed in the image. Verify that the `COPY` and `RUN pip install` (or equivalent) steps include everything the migration command needs.
 
-If the app also uses cron (see below), combine both in the entrypoint:
-
-```dockerfile
-CMD ["sh", "-c", "python manage.py migrate && (env && cat config/crontab) | crontab - && cron && exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
-```
-
-## Cron Jobs
-
-There is no need for a separate cron container. Run cron in the background before starting the web server.
-
-Most slim base images do not include cron. In that case, install it in the Dockerfile:
-
-```dockerfile
-RUN apt-get update && apt-get install -y --no-install-recommends cron && rm -rf /var/lib/apt/lists/*
-```
-
-Then configure the entrypoint to load the crontab and start cron in the background before the web server:
-
-```dockerfile
-CMD ["sh", "-c", "(env && cat config/crontab) | crontab - && cron && exec gunicorn --bind 0.0.0.0:80 --workers 2 app:app"]
-```
-
-The `COPY . .` in the standard Dockerfile pattern already includes `config/crontab` in the image — no extra COPY needed.
-
-Cron does not inherit the container's environment variables by default. The `env` prefix in the command above pipes the current environment into the crontab, making all variables (including `DATABASE_URL`, `POSTGRES_HOST`, etc.) available to cron jobs.
-
-Place the crontab file at `config/crontab` in the repository. Standard crontab format:
-
-```
-*/5 * * * * cd /app && python scripts/cleanup.py >> /proc/1/fd/1 2>&1
-0 2 * * * cd /app && python scripts/daily_report.py >> /proc/1/fd/1 2>&1
-```
-
-Redirect output to `/proc/1/fd/1` so cron job logs appear in the container's stdout (visible via `docker logs` and Kamal).
-
-### Resource-intensive cron jobs
-
-If a cron job performs heavy work (large data processing, bulk emails, report generation), avoid running it on the web VM where it would compete with request handling. Instead, have the cron entry submit a job to the workers via Postgres:
-
-1. Cron job inserts a row into a jobs table (lightweight, runs on the web VM)
-2. Workers poll the jobs table using `SELECT ... FOR UPDATE SKIP LOCKED` to pick up and execute jobs
-3. Workers update the row with status and results on completion
-
-This keeps cron entries small and fast while offloading the actual work to worker VMs.
-
 ## Deployment Outputs and URLs
 
 After a deploy workflow completes, extract information from:
@@ -295,7 +246,7 @@ When the developer cannot run the language runtime or database locally:
 - **[references/scaling.md](references/scaling.md)** -- VM plans, worker scaling, disk sizes
 - **[references/teardown.md](references/teardown.md)** -- Teardown process, inferring parameters, reading outputs
 - **[references/pgmq.md](references/pgmq.md)** -- pgmq message queue: SQL examples for send, read, archive, delete
-- **[references/pg-cron.md](references/pg-cron.md)** -- pg_cron job scheduling: syntax, common patterns, job management
+- **[references/pg-cron.md](references/pg-cron.md)** -- pg_cron + pg_net: scheduled jobs, HTTP triggers, common patterns
 - **[references/pgroonga.md](references/pgroonga.md)** -- PGroonga full-text search: operators, ranking, highlighting, CJK support
 - **[references/pgvector.md](references/pgvector.md)** -- pgvector similarity search: distance operators, HNSW/IVFFlat indexes, tuning
 - **[references/pg-jsonschema.md](references/pg-jsonschema.md)** -- pg_jsonschema validation: CHECK constraint pattern, core functions

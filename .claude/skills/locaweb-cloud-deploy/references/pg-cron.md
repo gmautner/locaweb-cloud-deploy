@@ -72,15 +72,82 @@ SELECT cron.schedule(
 );
 ```
 
-Call an HTTP endpoint (requires `pg_net` or `http` extension):
+## Triggering Application Code via pg_net
+
+`pg_net` is the recommended way to run scheduled application logic. Instead of container-level cron, schedule `pg_cron` jobs that fire HTTP requests to your app's endpoints using `pg_net`.
+
+Setup:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_net;
+```
+
+### net.http_post
+
+```sql
+net.http_post(
+  url text,
+  body jsonb default '{}'::jsonb,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{"Content-Type": "application/json"}'::jsonb,
+  timeout_milliseconds int default 1000
+) returns bigint  -- request ID
+```
+
+### net.http_get
+
+```sql
+net.http_get(
+  url text,
+  params jsonb default '{}'::jsonb,
+  headers jsonb default '{}'::jsonb,
+  timeout_milliseconds int default 1000
+) returns bigint  -- request ID
+```
+
+Both functions are **asynchronous** — the HTTP request is dispatched by a background worker after the transaction commits. The return value is a request ID. Responses are stored in `net._http_response` for 6 hours.
+
+### pg_cron + pg_net examples
+
+Trigger a cleanup endpoint every 5 minutes:
+
+```sql
+SELECT cron.schedule(
+  'periodic-cleanup',
+  '*/5 * * * *',
+  $$SELECT net.http_post('http://localhost/tasks/cleanup', '{}')$$
+);
+```
+
+Trigger a daily report generation (offloaded to workers via pgmq):
+
+```sql
+SELECT cron.schedule(
+  'daily-report',
+  '0 3 * * *',
+  $$SELECT net.http_post('http://localhost/tasks/daily-report', '{}')$$
+);
+```
+
+Call an external webhook:
 
 ```sql
 SELECT cron.schedule(
   'webhook-ping',
   '*/5 * * * *',
-  $$SELECT http_post('https://example.com/webhook', '{}', 'application/json')$$
+  $$SELECT net.http_post('https://example.com/webhook', '{"source": "myapp"}')$$
 );
 ```
+
+**Pattern: heavy scheduled work.** For resource-intensive tasks (large data processing, bulk emails, report generation), the pg_cron job should call a lightweight app endpoint that enqueues work to pgmq. Workers then pick up and execute the job, keeping the web VM free for request handling.
+
+### Checking responses
+
+```sql
+SELECT * FROM net._http_response ORDER BY created DESC LIMIT 10;
+```
+
+Columns: `id`, `status_code`, `headers`, `body`, `timed_out`, `error_msg`, `created`.
 
 ## Manage Jobs
 
