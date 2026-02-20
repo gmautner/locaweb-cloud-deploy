@@ -35,7 +35,7 @@ on:
 
 jobs:
   teardown:
-    uses: gmautner/locaweb-cloud-deploy/.github/workflows/teardown.yml@main
+    uses: gmautner/locaweb-cloud-deploy/.github/workflows/teardown.yml@v0
     with:
       env_name: "preview"
       zone: "ZP01"

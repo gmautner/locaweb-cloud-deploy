@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@main
+    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@v0
     with:
       env_name: "preview"
       zone: "ZP01"
@@ -79,7 +79,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@main
+    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@v0
     with:
       env_name: "production"
       zone: "ZP01"
@@ -146,7 +146,7 @@ permissions:
 
 jobs:
   deploy:
-    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@main
+    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@v0
     with:
       env_name: "preview"                    # Optional, default: "preview"
       zone: "ZP01"                           # Optional, default: "ZP01" (options: ZP01, ZP02)
@@ -205,7 +205,7 @@ The deploy workflow exposes outputs that can be consumed by subsequent jobs:
 ```yaml
 jobs:
   deploy:
-    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@main
+    uses: gmautner/locaweb-cloud-deploy/.github/workflows/deploy.yml@v0
     with:
       # ... inputs
     secrets:
