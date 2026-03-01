@@ -6,7 +6,7 @@ Reads from environment:
   INPUT_WORKERS_CMD     - Command for worker containers
   INPUT_DB_ENABLED      - Whether database is enabled
   INPUT_DB_PLAN         - Database VM plan (micro, small, medium, etc.)
-  INPUT_DOMAIN          - Custom domain (optional, enables SSL via Let's Encrypt)
+  INPUT_DOMAIN          - Custom domain (optional). TLS is always enabled via Let's Encrypt.
   REPO_NAME             - Repository name
   REPO_FULL             - Full repository path (owner/name)
   REPO_OWNER            - Repository owner
@@ -105,7 +105,7 @@ config = {
         'host': domain if domain else f'{web_ip}.nip.io',
         'app_port': 80,
         'forward_headers': False,
-        'ssl': bool(domain),
+        'ssl': True,
         'healthcheck': {
             'path': '/up',
             'interval': 3,

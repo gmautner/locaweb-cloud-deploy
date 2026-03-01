@@ -40,7 +40,7 @@ jobs:
       POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
 ```
 
-After this runs successfully, the app is accessible at `http://<web_ip>.nip.io`. The `web_ip` is visible in the workflow run summary.
+After this runs successfully, the app is accessible at `https://<web_ip>.nip.io`. The `web_ip` is visible in the workflow run summary.
 
 ## Additional Environments
 
@@ -106,7 +106,7 @@ All inputs, their types, defaults, and when to use them:
 |-------|------|---------|-------------|
 | `env_name` | string | `"preview"` | Name of the environment. Each env_name creates fully isolated infrastructure. Defaults to `"preview"` if omitted. |
 | `zone` | string | `"ZP01"` | CloudStack zone. Usually leave as default. Use `ZP02` for geographic redundancy. |
-| `domain` | string | `""` (empty) | Set for production environments where HTTPS is needed. Leave empty for preview/dev (uses nip.io). See SKILL.md for the DNS setup procedure. |
+| `domain` | string | `""` (empty) | Set for production environments with a custom domain. Leave empty for preview/dev (uses nip.io). TLS is always enabled. See SKILL.md for the DNS setup procedure. |
 | `web_plan` | string | `"small"` | Choose based on runtime footprint and environment. See [scaling.md](scaling.md) for plan specs. |
 | `blob_disk_size_gb` | number | `20` | Increase if the app stores files (uploads, media). Consider environment: preview can use smaller, production may need more. Can only grow, never shrink. |
 | `workers_enabled` | boolean | `false` | Set `true` when the app needs background processing. |
@@ -150,7 +150,7 @@ jobs:
     with:
       env_name: "preview"                    # Optional, default: "preview"
       zone: "ZP01"                           # Optional, default: "ZP01" (options: ZP01, ZP02)
-      domain: ""                             # Optional, default: "" (empty = nip.io, no HTTPS)
+      domain: ""                             # Optional, default: "" (empty = nip.io, HTTPS via Let's Encrypt)
       web_plan: "small"                      # Optional, default: "small"
       blob_disk_size_gb: 20                  # Optional, default: 20 (grow only, never shrink)
       workers_enabled: true                  # Optional, default: false

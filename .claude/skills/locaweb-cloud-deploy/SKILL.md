@@ -32,7 +32,7 @@ These constraints apply to **every** application deployed to this platform. Comm
   - **HTTP from SQL**: `pg_net` extension — asynchronous HTTP/HTTPS requests from SQL. Used with `pg_cron` to call app endpoints on a schedule, or from triggers to fire webhooks. See [references/pg-cron.md](references/pg-cron.md)
   - Other notable extensions: `pgjwt`, `pg_stat_statements`, `pgaudit`, `pg_hashids`
 - **Single web VM**: No horizontal web scaling. Scale vertically with larger `web_plan`. Prefer runtimes and frameworks that scale well vertically.
-- **No TLS without a domain**: nip.io URLs are HTTP only. Use a custom domain for HTTPS.
+- **TLS always enabled**: All deployments (nip.io and custom domain) use HTTPS via Let's Encrypt.
 - **Single PostgreSQL instance**: No read replicas or multiple databases.
 - **Workers use the same Docker image** with a different command (`workers_cmd`).
 - **No Docker build in the caller workflow**: The reusable deploy workflow builds, pushes, and deploys the Docker image internally via Kamal. The caller workflow must **not** include any Docker build or push steps (no `docker/build-push-action`, no `docker build`, no `docker push`, no login to ghcr.io). The caller just calls the reusable workflow — Kamal handles the entire build-push-deploy lifecycle using the Dockerfile at the repo root.
@@ -134,7 +134,7 @@ After setup is complete, use this cycle to deploy and iterate on the application
 
 ### Verify the running application
 
-- Browse the app at `http://<web_ip>.nip.io` (get `web_ip` from the workflow run summary)
+- Browse the app at `https://<web_ip>.nip.io` (get `web_ip` from the workflow run summary)
 - Use Playwright for browser-based verification (see [references/setup-and-deploy.md](references/setup-and-deploy.md) for setup)
 - If the app doesn't work: SSH into the VMs to check logs (use the locally saved SSH key and the public IPs from the workflow output), diagnose, fix source code, commit/push, and repeat the deploy cycle
 - Continue until the app works correctly
@@ -149,7 +149,7 @@ Quick reference for interacting with deployed infrastructure. See [references/op
 | SSH into a VM | `ssh -i ~/.ssh/<repo-name>[-<env_name>] root@<ip>` |
 | Connect to database | SSH into DB VM → `docker exec -it <repo-name>-db psql -U postgres` |
 | View app logs | SSH into web VM → `docker logs $(docker ps -q --filter "label=service=<repo-name>") --tail 100` |
-| Check app health | `curl -s http://<web_ip>.nip.io/up` |
+| Check app health | `curl -s https://<web_ip>.nip.io/up` |
 | Shell into app container | SSH into web VM → `docker exec -it $(docker ps -q --filter "label=service=<repo-name>") sh` |
 
 ## Dockerfile Requirements
@@ -198,14 +198,14 @@ After a deploy workflow completes, extract information from:
 
 ### Determining the app URL
 
-- **No domain (preview)**: `http://<web_ip>.nip.io` -- works immediately, no DNS needed, no HTTPS
-- **With domain**: `https://<domain>` -- requires DNS A record pointing to `web_ip`, automatic SSL via Let's Encrypt
+- **No domain (preview)**: `https://<web_ip>.nip.io` -- works immediately, no DNS needed, TLS via Let's Encrypt
+- **With domain**: `https://<domain>` -- requires DNS A record pointing to `web_ip`, TLS via Let's Encrypt
 
 ### DNS Configuration for Custom Domains
 
 The web VM's public IP is not known until the first deployment completes. To set up a custom domain:
 
-1. **Deploy without a domain first** (leave `domain` empty). The app will be accessible at `http://<web_ip>.nip.io`.
+1. **Deploy without a domain first** (leave `domain` empty). The app will be accessible at `https://<web_ip>.nip.io`.
 2. **Note the `web_ip`** from the workflow output or step summary.
 3. **Create a DNS A record** pointing the domain to that IP:
    ```

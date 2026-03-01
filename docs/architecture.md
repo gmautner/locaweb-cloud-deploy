@@ -119,7 +119,7 @@ A single-job reusable workflow that provisions infrastructure and deploys the ap
 |---|---|---|---|
 | `env_name` | string | `preview` | Environment name for resource isolation (e.g., preview, staging, production) |
 | `zone` | choice | `ZP01` | CloudStack availability zone |
-| `domain` | string | `""` | Custom domain; enables SSL via Let's Encrypt when set |
+| `domain` | string | `""` | Custom domain (optional). TLS is always enabled via Let's Encrypt. |
 | `web_plan` | choice | `small` | VM size for the web server |
 | `blob_disk_size_gb` | string | `20` | Data disk size for blob storage |
 | `workers_enabled` | boolean | `false` | Whether to create worker VMs |
@@ -151,7 +151,7 @@ A single-job reusable workflow that provisions infrastructure and deploys the ap
 13b. **Verify Kamal** -- Runs `kamal version` to confirm the binary works.
 14. **Prepare SSH key** -- Copies the private key to `.kamal/ssh_key` with mode 600.
 15. **Create secrets file and env vars** -- Writes `.kamal/secrets` with `$VAR` references for `KAMAL_REGISTRY_PASSWORD`, and conditionally `POSTGRES_PASSWORD` and `DATABASE_URL` (if `db_enabled`). Parses the `SECRET_ENV_VARS` secret and `ENV_VARS` variable (both in dotenv format) using `python-dotenv`: secrets are added as `$VAR` references in `.kamal/secrets` and their resolved values are written to a sourceable env file for the deploy step; variables are written to a JSON file for the config generation step to merge as clear env vars.
-16. **Generate deploy config** -- Inline Python dynamically generates `config/deploy.yml` (the Kamal configuration) from the provision output, incorporating conditional sections for workers and database accessories. When the `domain` input is set, the proxy host is set to the domain and SSL is enabled via Let's Encrypt; otherwise, nip.io wildcard DNS is used with SSL disabled. Merges any custom variables from `ENV_VARS` as clear env vars and custom secrets from `SECRET_ENV_VARS` as secret env vars.
+16. **Generate deploy config** -- Inline Python dynamically generates `config/deploy.yml` (the Kamal configuration) from the provision output, incorporating conditional sections for workers and database accessories. When the `domain` input is set, the proxy host is set to the domain; otherwise, nip.io wildcard DNS is used. SSL is always enabled via Let's Encrypt for both cases. Merges any custom variables from `ENV_VARS` as clear env vars and custom secrets from `SECRET_ENV_VARS` as secret env vars.
 17. **Deploy with Kamal** -- On first deploy (infrastructure cache miss), runs `kamal setup`, which installs Docker on all hosts, boots accessories (PostgreSQL), and deploys the application. On consecutive deploys (cache hit), runs `kamal deploy`, which skips Docker installation and accessory bootstrapping, only building and deploying the new application image. Both modes handle registry authentication, image build and push, and deployment behind kamal-proxy.
 18. **Reboot DB accessory if tuning changed** -- (Only when `db_enabled`) Compares the desired PostgreSQL `cmd` from the generated config against the running container's command via `docker inspect`. If the parameters differ (i.e., `db_plan` changed since the last deploy), runs `kamal accessory reboot db` to recreate the container with updated tuning. Skipped on first deploy (container was just created with correct parameters) and when the plan hasn't changed. This is necessary because `kamal setup` skips existing accessory containers, and Docker's `--restart unless-stopped` policy preserves the original command even across VM reboots.
 19. **Print deployment summary** -- Outputs commit SHA, image tag, application URL, and health check URL to the step summary.
@@ -335,7 +335,7 @@ proxy:
   host: <domain> or <web-ip>.nip.io    # Custom domain or wildcard DNS via nip.io
   app_port: 80
   forward_headers: false                # No upstream load balancers (static NAT direct to internet)
-  ssl: true/false                       # true when domain is set (Let's Encrypt); false otherwise
+  ssl: true                             # Always enabled; Let's Encrypt for both nip.io and custom domains
   healthcheck:
     path: /up
     interval: 3
@@ -486,7 +486,7 @@ The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker s
 - **Static NAT (1:1)**: Each VM receives a dedicated public IP with 1:1 static NAT. This maps all inbound ports on the public IP to the VM's private IP. Outbound traffic from VMs also uses their respective public IPs.
 - **Firewall rules**: CloudStack firewall rules control inbound access. The web VM allows TCP ports 22 (SSH), 80 (HTTP), and 443 (HTTPS). Worker and DB VMs allow only TCP port 22 (SSH). All rules use CIDR `0.0.0.0/0` (unrestricted source).
 - **Internal database access**: The web application connects to PostgreSQL using the DB VM's internal IP (`POSTGRES_HOST` environment variable), avoiding public network traversal for database traffic.
-- **Wildcard DNS / Custom domain**: When no custom domain is configured, kamal-proxy uses `<web-ip>.nip.io` for Host header routing. The nip.io service resolves any `A.B.C.D.nip.io` address to `A.B.C.D`, providing wildcard DNS without custom domain configuration. When a custom domain is set, kamal-proxy uses the domain as the proxy host and enables SSL via Let's Encrypt (automatic certificate provisioning on port 443).
+- **Wildcard DNS / Custom domain**: When no custom domain is configured, kamal-proxy uses `<web-ip>.nip.io` for Host header routing. The nip.io service resolves any `A.B.C.D.nip.io` address to `A.B.C.D`, providing wildcard DNS without custom domain configuration. When a custom domain is set, kamal-proxy uses the domain as the proxy host. TLS via Let's Encrypt is enabled for both cases -- nip.io subdomains are valid public DNS names that support HTTP-01 challenges.
 - **Source NAT**: CloudStack automatically provides a source NAT IP for the isolated network, used for outbound internet access (e.g., pulling Docker images from ghcr.io).
 
 ---
@@ -554,8 +554,8 @@ The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker s
 ### Runtime request flow
 
 ```
-HTTP/HTTPS Request -> Public IP -> Static NAT -> Web VM:80/443
-  -> kamal-proxy (Host header routing; TLS termination if domain configured)
+HTTPS Request -> Public IP -> Static NAT -> Web VM:443
+  -> kamal-proxy (Host header routing; TLS termination via Let's Encrypt)
     -> app container (gunicorn, 2 workers)
       -> PostgreSQL (DB VM internal IP:5432)
       -> Blob storage (/data/blobs on mounted data disk)
@@ -670,7 +670,7 @@ Example for a "production" environment: `SSH_PRIVATE_KEY_PRODUCTION`, `POSTGRES_
 
 - Firewall rules use `0.0.0.0/0` source CIDR, meaning SSH is open to the internet on all VMs. IP filtering to GitHub Actions runner ranges is a near-term TODO. fail2ban is installed on all VMs to mitigate brute-force attacks (3 retries, 1-hour ban, aggressive mode).
 - The database VM's SSH port is exposed publicly, though PostgreSQL's port (5432) is not.
-- TLS via Let's Encrypt is available when a custom domain is configured. Without a domain, traffic is unencrypted HTTP over nip.io.
+- TLS via Let's Encrypt is always enabled for all deployments (both nip.io and custom domain). All traffic is encrypted.
 - Worker VMs have public IPs with SSH access, even though they may not require external connectivity.
 
 ---
@@ -772,7 +772,7 @@ Two complementary test suites validate the system at different levels:
 - **Single web host**: The Kamal configuration supports only one web server host. Horizontal scaling of the web tier is not supported.
 - **Root SSH required**: Kamal requires root-level SSH access to manage Docker. Non-root deployment is not supported.
 - **No rolling updates for workers**: Worker containers are deployed simultaneously, not in a rolling fashion.
-- **TLS requires a custom domain**: SSL via Let's Encrypt is enabled when the `domain` input is set. Without a domain, kamal-proxy serves plain HTTP over nip.io (Let's Encrypt cannot issue certificates for nip.io subdomains).
+- **TLS depends on Let's Encrypt and nip.io**: SSL via Let's Encrypt is always enabled. Both nip.io subdomains and custom domains support HTTP-01 challenges. Certificate provisioning depends on Let's Encrypt and (for nip.io deployments) nip.io DNS availability.
 - **Sequential provisioning and deployment**: Infrastructure provisioning and Kamal deployment run sequentially in a single job. A provisioning failure prevents deployment; a deployment failure leaves infrastructure provisioned.
 
 ### Operational constraints

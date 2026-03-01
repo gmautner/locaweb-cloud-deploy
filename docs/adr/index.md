@@ -19,7 +19,7 @@ This directory contains the Architectural Decision Records (ADRs) for the `locaw
 | [ADR-013](013-kamal-prefix-env-vars.md) | KAMAL_ Prefix Convention for Custom Environment Variables | Superseded by ADR-019 |
 | [ADR-014](014-e2e-test-orchestration.md) | E2E Test Orchestration via Real Workflow Triggers | Accepted |
 | [ADR-015](015-in-place-vm-scaling-and-disk-resize.md) | In-Place VM Scaling and Disk Resize | Accepted |
-| [ADR-016](016-custom-domain-ssl.md) | Custom Domain Support with Let's Encrypt SSL | Accepted |
+| [ADR-016](016-custom-domain-ssl.md) | Custom Domain Support with Let's Encrypt SSL | Superseded by ADR-027 |
 | [ADR-017](017-cross-zone-disaster-recovery.md) | Disaster Recovery via Snapshots | Accepted |
 | [ADR-018](018-fail2ban-ssh-protection.md) | fail2ban for SSH Brute-Force Protection | Accepted |
 | [ADR-019](019-dotenv-kamal-secrets-vars.md) | Consolidated Dotenv Format for Custom Container Environment Variables | Accepted |
@@ -30,3 +30,4 @@ This directory contains the Architectural Decision Records (ADRs) for the `locaw
 | [ADR-024](024-plan-based-postgres-tuning.md) | Plan-Based PostgreSQL Parameter Tuning | Accepted |
 | [ADR-025](025-supabase-postgres-hardcoded.md) | Switch to supabase/postgres with Hardcoded Version | Accepted |
 | [ADR-026](026-deploy-caching.md) | Input-Hash Caching for Faster Consecutive Deploys | Accepted |
+| [ADR-027](027-universal-tls.md) | Universal TLS via Let's Encrypt | Accepted |

@@ -38,5 +38,6 @@ The workflow also accepts an optional `domain` input for users who want to confi
 **Negative:**
 
 - Depends on the external nip.io service. If nip.io is down, hostname resolution fails and the application becomes inaccessible by name.
-- Not suitable for production use. nip.io domains cannot have valid TLS certificates issued by public CAs (without DNS-01 challenges for the nip.io zone, which is not controlled by the user).
 - Some corporate firewalls or DNS filters may block nip.io resolution.
+
+**Note:** nip.io subdomains are valid public DNS names that resolve correctly, so Let's Encrypt HTTP-01 challenges work against them. TLS is enabled for nip.io deployments (see ADR-027).

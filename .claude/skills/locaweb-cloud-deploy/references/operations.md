@@ -22,7 +22,7 @@ The JSON contains:
 
 | Key              | Description                                                        |
 |------------------|--------------------------------------------------------------------|
-| `web_ip`         | Public IP of the web VM — used for SSH and app URL (`<web_ip>.nip.io`) |
+| `web_ip`         | Public IP of the web VM — used for SSH and app URL (`https://<web_ip>.nip.io`) |
 | `worker_ips`     | JSON array of public worker VM IPs — used for SSH                  |
 | `db_ip`          | **Public** IP of the database VM — used for **SSH only**           |
 | `db_internal_ip` | **Private** IP of the database VM — used by the app to connect to Postgres (set automatically via `POSTGRES_HOST`) |

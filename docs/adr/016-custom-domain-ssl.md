@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Superseded by [ADR-027](027-universal-tls.md)
 
 ## Context
 

@@ -39,7 +39,7 @@ on:
           - ZP01
           - ZP02
       domain:
-        description: "Custom domain (optional, enables SSL via Let's Encrypt)"
+        description: "Custom domain (optional). TLS is always enabled via Let's Encrypt."
         required: false
         default: ""
       web_plan:
@@ -449,8 +449,8 @@ jobs:
               url = f'https://{domain}'
               health = f'https://{domain}/up'
           else:
-              url = f'http://{web_ip}'
-              health = f'http://{web_ip}/up'
+              url = f'https://{web_ip}.nip.io'
+              health = f'https://{web_ip}.nip.io/up'
           print('')
           print('## Kamal Deployment Complete')
           print('')
@@ -458,7 +458,8 @@ jobs:
           print(f'- **Image:** `ghcr.io/{repo}:{sha}`')
           print(f'- **URL:** {url}')
           print(f'- **Health check:** {health}')
+          print(f'- **TLS:** Let\'s Encrypt (automatic)')
           if domain:
-              print(f'- **Domain:** `{domain}` (SSL via Let\'s Encrypt)')
+              print(f'- **Domain:** `{domain}`')
               print(f'- **Public IP:** `{web_ip}` (point DNS A record here)')
           PYEOF

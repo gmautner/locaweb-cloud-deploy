@@ -551,22 +551,20 @@ class SSHVerifier:
 class HTTPVerifier:
     """HTTP request verification against the deployed application.
 
-    When domain is provided, uses HTTPS with certificate verification.
-    Otherwise, uses plain HTTP with nip.io Host header.
+    Always uses HTTPS with certificate verification. TLS is enabled for
+    both custom domain and nip.io deployments via Let's Encrypt.
     """
 
     def __init__(self, ip, domain=None):
         self.ip = ip
         self.domain = domain
         self.host = domain if domain else f"{ip}.nip.io"
-        self.use_https = bool(domain)
+        self.use_https = True
 
     def _connect(self, timeout=10):
-        """Create an HTTP(S) connection."""
-        if self.use_https:
-            ctx = ssl.create_default_context()
-            return HTTPSConnection(self.domain, 443, timeout=timeout, context=ctx)
-        return HTTPConnection(self.ip, 80, timeout=timeout)
+        """Create an HTTPS connection."""
+        ctx = ssl.create_default_context()
+        return HTTPSConnection(self.host, 443, timeout=timeout, context=ctx)
 
     def get(self, path="/", timeout=10):
         """HTTP(S) GET. Returns (status_code, body)."""

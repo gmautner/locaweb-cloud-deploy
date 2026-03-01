@@ -276,7 +276,7 @@ gh run download <run-id> --name provision-output --dir /tmp/provision-output
 cat /tmp/provision-output/provision-output.json
 ```
 
-The app URL is `http://<web_ip>.nip.io` (for preview without a domain).
+The app URL is `https://<web_ip>.nip.io` (for preview without a domain).
 
 ## App Verification Cycle
 
@@ -284,14 +284,14 @@ After the workflow succeeds, verify the application is working:
 
 ### 1. Browse the app
 
-Open `http://<web_ip>.nip.io` in a browser or fetch with curl:
+Open `https://<web_ip>.nip.io` in a browser or fetch with curl:
 
 ```bash
 # Health check
-curl -s -o /dev/null -w "%{http_code}" http://<web_ip>.nip.io/up
+curl -s -o /dev/null -w "%{http_code}" https://<web_ip>.nip.io/up
 
 # Home page
-curl -s http://<web_ip>.nip.io/
+curl -s https://<web_ip>.nip.io/
 ```
 
 For browser-based verification, use Playwright:
