@@ -111,6 +111,6 @@ jobs:
           EOF
           )"
 
-          gh pr merge --auto --squash "$branch"
+          gh pr merge --squash "$branch"
 
-          echo "📦 PR created and auto-merge enabled for \`$branch\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "📦 PR created and merged for \`$branch\`" >> "$GITHUB_STEP_SUMMARY"
