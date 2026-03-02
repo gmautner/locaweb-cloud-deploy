@@ -310,19 +310,28 @@ def scale_vm(vm_id, name, new_offering_id, zone_id=None):
 
 
 def ensure_vm_running(vm_id, name, zone_id=None, timeout=120):
-    """Poll until a VM reaches Running state, starting it if Stopped.
+    """Poll until a VM reaches Running state after disk attach.
 
-    CloudStack may stop a VM when attaching a data disk.  This helper
-    ensures the VM is back in Running state before continuing.
+    CloudStack may briefly report a VM as Stopped during data disk
+    hot-attach even though the VM is still running at the hypervisor
+    level.  This helper waits for the API state to settle.  If the VM
+    is genuinely Stopped after a long wait, it attempts a start.
     """
     deadline = time.time() + timeout
+    started = False
     while time.time() < deadline:
         vm = find_vm(name, zone_id=zone_id)
         if vm and vm.get("state") == "Running":
             return
-        if vm and vm.get("state") == "Stopped":
-            print(f"  VM {name} is Stopped after disk attach, starting...")
-            cmk("start", "virtualmachine", f"id={vm_id}")
+        if vm and vm.get("state") == "Stopped" and not started:
+            elapsed = timeout - (deadline - time.time())
+            if elapsed > 30:
+                # VM has been Stopped for >30s — likely genuinely stopped
+                print(f"  VM {name} still Stopped after {elapsed:.0f}s, starting...")
+                result = cmk_quiet("start", "virtualmachine", f"id={vm_id}")
+                if result is None:
+                    print(f"  Start failed (VM may already be running), continuing to wait...")
+                started = True
         time.sleep(5)
     print(f"  Warning: VM {name} did not reach Running state within {timeout}s")
 
