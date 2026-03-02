@@ -485,7 +485,23 @@ def git_commit_and_push(message):
     subprocess.run(["git", "commit", "-m", message],
                    check=True, cwd=SCRIPT_DIR)
     subprocess.run(["git", "push"], check=True, cwd=SCRIPT_DIR)
-    print(f"  Committed and pushed: {message}")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=True, capture_output=True,
+        text=True, cwd=SCRIPT_DIR).stdout.strip()
+    # Wait for GitHub to propagate the push so workflow_dispatch
+    # resolves the branch to the correct SHA.
+    branch = subprocess.run(
+        ["git", "branch", "--show-current"], check=True,
+        capture_output=True, text=True, cwd=SCRIPT_DIR).stdout.strip()
+    for _ in range(12):
+        time.sleep(5)
+        remote_sha = gh("api", f"repos/{REPO_FULL}/git/ref/heads/{branch}",
+                        "--jq", ".object.sha").strip()
+        if remote_sha == sha:
+            break
+    else:
+        print(f"    [WARN] Branch {branch} still at {remote_sha[:7]}, expected {sha[:7]}")
+    print(f"  Committed and pushed: {message} ({sha[:7]})")
 
 
 def setup_e2e_branch():
