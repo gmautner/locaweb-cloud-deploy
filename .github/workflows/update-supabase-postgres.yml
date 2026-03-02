@@ -93,7 +93,7 @@ jobs:
           git checkout -b "$branch"
           git add config/deploy.preview.yml config/deploy.e2etest.yml docs/architecture.md
           git commit -m "Bump supabase/postgres ${current} → ${latest}"
-          git push -u origin "$branch"
+          git push -u --force origin "$branch"
 
           gh pr create \
             --title "Bump supabase/postgres ${current} → ${latest}" \
