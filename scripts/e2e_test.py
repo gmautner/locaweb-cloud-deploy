@@ -445,7 +445,23 @@ def write_destination_file(env_name, workers=0, domain=None, accessories=None):
         lines.append("accessories:")
         for name in accessories:
             lines.append(f"  {name}:")
-            lines.append(f"    host: <%= ENV['INFRA_{name.upper()}_IP'] %>")
+            if name == "db":
+                lines.append(f"    image: supabase/postgres:17.6.1.087")
+                lines.append(f"    host: <%= ENV['INFRA_{name.upper()}_IP'] %>")
+                lines.append(f'    port: "5432:5432"')
+                lines.append(f'    cmd: "postgres -D /etc/postgresql'
+                             f' -c shared_buffers=1GB'
+                             f' -c effective_cache_size=3GB'
+                             f' -c work_mem=10MB'
+                             f' -c maintenance_work_mem=256MB'
+                             f' -c max_connections=100"')
+                lines.append(f"    env:")
+                lines.append(f"      secret:")
+                lines.append(f"        - POSTGRES_PASSWORD")
+                lines.append(f"    directories:")
+                lines.append(f"      - /data/pgdata:/var/lib/postgresql/data")
+            else:
+                lines.append(f"    host: <%= ENV['INFRA_{name.upper()}_IP'] %>")
     lines.append("")
 
     path = os.path.join(SCRIPT_DIR, "..", "config", f"deploy.{env_name}.yml")
