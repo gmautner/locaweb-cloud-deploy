@@ -7,7 +7,8 @@ servers:
       - <%= ENV['INFRA_WEB_IP'] %>
 
 proxy:
-  host: e2e.kamal.giba.tech
+  host: <%= ENV['INFRA_WEB_IP'] %>.nip.io
+  ssl: false
 
 ssh:
   user: root
