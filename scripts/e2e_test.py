@@ -1136,9 +1136,9 @@ class E2ETestRunner:
                                         "db volume")
 
             # Accessory ports: positive test — redeploy nginx with ports: "80"
+            # No prepare_deploy needed — Kamal destination file is unchanged,
+            # only the infrastructure accessories JSON changes (adds ports).
             if nginx_ip:
-                self.prepare_deploy(DEFAULT_ENV_NAME, workers=1,
-                                    accessories=["db", "nginx"])
                 output2 = trigger_deploy({
                     "zone": ZONE,
                     "env_name": DEFAULT_ENV_NAME,
