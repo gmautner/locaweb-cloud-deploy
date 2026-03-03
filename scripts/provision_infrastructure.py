@@ -618,7 +618,7 @@ def provision(config, repo_name, unique_id, env_name, public_key, recover=False)
                     f"displaytext={network_name}",
                     f"networkofferingid={net_offering_id}",
                     f"zoneid={zone_id}",
-                    f"networkdomain={env_name}.internal")
+                    f"networkdomain={env_name}.{zone_name.lower()}.internal")
         net_id = data["network"]["id"]
         print(f"  Created: {net_id}")
     results["network_id"] = net_id
