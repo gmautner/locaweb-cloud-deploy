@@ -62,8 +62,12 @@ jobs:
 
       - uses: crazy-max/ghaction-github-runtime@v3
 
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
       - name: Install Kamal
-        run: sudo gem install kamal --no-document
+        run: gem install kamal --no-document
 
       - name: Deploy with Kamal
         env:
