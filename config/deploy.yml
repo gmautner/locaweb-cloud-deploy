@@ -16,7 +16,7 @@ env:
     - POSTGRES_HOST
     - MY_SECRET
 
-directories:
+volumes:
   - /data/blobs:/data/blobs
 
 readiness_delay: 15
