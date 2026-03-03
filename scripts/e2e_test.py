@@ -473,6 +473,8 @@ def write_destination_file(env_name, workers=0, domain=None, accessories=None):
                 lines.append(f"    proxy:")
                 lines.append(f"      host: <%= ENV['INFRA_{name.upper()}_IP'] %>.nip.io")
                 lines.append(f"      ssl: false")
+                lines.append(f"      healthcheck:")
+                lines.append(f"        path: /")
             else:
                 lines.append(f"    host: <%= ENV['INFRA_{name.upper()}_IP'] %>")
     lines.append("")
