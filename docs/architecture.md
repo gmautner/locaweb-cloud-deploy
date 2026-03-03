@@ -363,7 +363,7 @@ env:
   secret:                               # Only if db_enabled
     - POSTGRES_PASSWORD
     - DATABASE_URL
-volumes:
+directories:
   - /data/blobs:/data/blobs
 accessories:                            # Only if db_enabled
   db:
