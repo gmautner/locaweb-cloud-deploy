@@ -60,6 +60,8 @@ jobs:
         with:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
+      # Expose GHA cache env vars for Kamal's `docker buildx build --cache-from type=gha`.
+      # Recommended by https://docs.docker.com/build/cache/backends/gha/
       - uses: crazy-max/ghaction-github-runtime@v3
 
       - uses: ruby/setup-ruby@v1
