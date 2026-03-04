@@ -56,7 +56,7 @@ Caller repo                          gmautner/locaweb-cloud-provision
 +-----------------------+
 ```
 
-The caller uses a two-job pattern: the `infra` job calls `provision.yml` for infrastructure provisioning, and the `deploy` job handles Kamal deployment using the infra outputs (`infra_env`, `infrastructure_changed`, `scaled_accessories`).
+The caller uses a two-job pattern: the `infra` job calls `provision.yml` for infrastructure provisioning, and the `deploy` job handles Kamal deployment using the infra outputs (`infra_env`). The deploy step always runs `kamal setup` (idempotent) followed by `kamal accessory reboot all`.
 
 ## Setup Procedure
 

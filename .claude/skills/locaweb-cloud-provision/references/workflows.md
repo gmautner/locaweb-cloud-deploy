@@ -81,21 +81,8 @@ jobs:
 
       - name: Deploy with Kamal
         run: |
-          if [ "${{ needs.infra.outputs.infrastructure_changed }}" = "true" ]; then
-            kamal setup -d preview
-          else
-            kamal deploy -d preview
-          fi
-
-      - name: Reboot scaled accessories
-        run: |
-          python3 << 'PYEOF'
-          import json, subprocess
-          scaled = json.loads('${{ needs.infra.outputs.scaled_accessories }}')
-          for name in scaled:
-              print(f"Accessory '{name}' VM was rescaled, rebooting...")
-              subprocess.run(["kamal", "accessory", "reboot", name, "-d", "preview"], check=True)
-          PYEOF
+          kamal setup -d preview
+          kamal accessory reboot all -d preview
 ```
 
 After this runs successfully, the app is accessible at `https://<web_ip>.nip.io`. The `web_ip` is visible in the workflow run summary.
@@ -184,21 +171,8 @@ jobs:
 
       - name: Deploy with Kamal
         run: |
-          if [ "${{ needs.infra.outputs.infrastructure_changed }}" = "true" ]; then
-            kamal setup -d production
-          else
-            kamal deploy -d production
-          fi
-
-      - name: Reboot scaled accessories
-        run: |
-          python3 << 'PYEOF'
-          import json, subprocess
-          scaled = json.loads('${{ needs.infra.outputs.scaled_accessories }}')
-          for name in scaled:
-              print(f"Accessory '{name}' VM was rescaled, rebooting...")
-              subprocess.run(["kamal", "accessory", "reboot", name, "-d", "production"], check=True)
-          PYEOF
+          kamal setup -d production
+          kamal accessory reboot all -d production
 ```
 
 To deploy to production: `git tag v1.0.0 && git push --tags`. The workflow checks out the tagged commit, so the Dockerfile and source code match the tag exactly.
@@ -236,8 +210,8 @@ Outputs from `provision.yml` that the caller's deploy job consumes:
 | `web_ip` | string | Public IP of the web VM |
 | `worker_ips` | JSON array | Public IPs of worker VMs (e.g., `["1.2.3.4","5.6.7.8"]`) |
 | `accessory_ips` | JSON object | Public IPs of accessory VMs (e.g., `{"db":"1.2.3.4"}`) |
-| `infrastructure_changed` | `"true"/"false"` | `"true"` on fresh provision (cache miss), `"false"` on cache hit. Use to decide `kamal setup` vs `kamal deploy`. |
-| `scaled_accessories` | JSON array | Names of accessories whose VMs were rescaled (e.g., `["db"]`). Iterate to reboot via `kamal accessory reboot`. |
+| `infrastructure_changed` | `"true"/"false"` | `"true"` on fresh provision (cache miss), `"false"` on cache hit. Informational — the deploy job always runs `kamal setup` (idempotent). |
+| `scaled_accessories` | JSON array | Names of accessories whose VMs were rescaled (e.g., `["db"]`). Informational — the deploy job always reboots all accessories. |
 | `infra_env` | multiline string | `KEY=VALUE` pairs ready to load into `GITHUB_ENV`. Contains `INFRA_WEB_IP`, `INFRA_<NAME>_IP` per accessory, `INFRA_WORKER_IP_<N>` per worker. |
 
 ### Loading infra outputs
@@ -322,21 +296,8 @@ jobs:
 
       - name: Deploy with Kamal
         run: |
-          if [ "${{ needs.infra.outputs.infrastructure_changed }}" = "true" ]; then
-            kamal setup -d preview
-          else
-            kamal deploy -d preview
-          fi
-
-      - name: Reboot scaled accessories
-        run: |
-          python3 << 'PYEOF'
-          import json, subprocess
-          scaled = json.loads('${{ needs.infra.outputs.scaled_accessories }}')
-          for name in scaled:
-              print(f"Accessory '{name}' VM was rescaled, rebooting...")
-              subprocess.run(["kamal", "accessory", "reboot", name, "-d", "preview"], check=True)
-          PYEOF
+          kamal setup -d preview
+          kamal accessory reboot all -d preview
 ```
 
 ## Workflow Permissions
