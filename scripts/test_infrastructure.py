@@ -540,7 +540,7 @@ class TestRunner:
                                "DB VM is Running")
 
             # --- Volumes ---
-            web_vol_name = f"{NETWORK_NAME}-webdata"
+            web_vol_name = f"{NETWORK_NAME}-web-data"
             s.assert_true(
                 self.verifier.verify_volume_exists(web_vol_name) is not None,
                 "Web volume exists")
@@ -548,7 +548,7 @@ class TestRunner:
                 self.verifier.verify_volume_tags(web_vol_name),
                 "Web volume has correct tag")
 
-            db_vol_name = f"{NETWORK_NAME}-dbdata"
+            db_vol_name = f"{NETWORK_NAME}-db-data"
             s.assert_true(
                 self.verifier.verify_volume_exists(db_vol_name) is not None,
                 "DB volume exists")
@@ -702,10 +702,10 @@ class TestRunner:
                 self.verifier.verify_vm_absent(f"worker-1"),
                 "Worker-1 VM gone")
             s.assert_true(
-                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-webdata"),
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-web-data"),
                 "Web volume gone")
             s.assert_true(
-                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-db-data"),
                 "DB volume gone")
             s.assert_true(self.verifier.verify_no_tagged_volumes(),
                           "No tagged volumes remain")
@@ -740,10 +740,10 @@ class TestRunner:
 
             s.assert_true(
                 self.verifier.verify_volume_exists(
-                    f"{NETWORK_NAME}-webdata") is not None,
+                    f"{NETWORK_NAME}-web-data") is not None,
                 "Web volume exists")
             s.assert_true(
-                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-dbdata"),
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-db-data"),
                 "No DB volume")
 
             s.assert_equal(self.verifier.count_non_sourcenat_ips(), 1,
@@ -781,7 +781,7 @@ class TestRunner:
                 self.verifier.verify_vm_absent("web"),
                 "Web VM gone")
             s.assert_true(
-                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-webdata"),
+                self.verifier.verify_volume_absent(f"{NETWORK_NAME}-web-data"),
                 "Web volume gone")
             s.assert_true(self.verifier.verify_no_tagged_volumes(),
                           "No tagged volumes remain")
@@ -814,7 +814,7 @@ class TestRunner:
                 "DB VM exists")
             s.assert_true(
                 self.verifier.verify_volume_exists(
-                    f"{NETWORK_NAME}-dbdata") is not None,
+                    f"{NETWORK_NAME}-db-data") is not None,
                 "DB volume exists")
             s.assert_equal(self.verifier.count_non_sourcenat_ips(), 3,
                            "3 public IPs")
@@ -839,10 +839,10 @@ class TestRunner:
 
             # Verify initial disk sizes
             s.assert_equal(
-                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-webdata"),
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-web-data"),
                 20, "Web volume is 20GB")
             s.assert_equal(
-                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-dbdata"),
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-db-data"),
                 20, "DB volume is 20GB")
 
         self.scenarios.append(s)
@@ -893,10 +893,10 @@ class TestRunner:
 
             # Verify disk sizes grew
             s.assert_equal(
-                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-webdata"),
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-web-data"),
                 30, "Web volume grew to 30GB")
             s.assert_equal(
-                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-dbdata"),
+                self.verifier.get_volume_size_gb(f"{NETWORK_NAME}-db-data"),
                 25, "DB volume grew to 25GB")
 
             # Verify all VMs are Running after scale

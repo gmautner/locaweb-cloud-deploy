@@ -395,7 +395,7 @@ def find_latest_snapshots(network_name, zone_id, accessory_names):
     """Find the latest snapshots for web and accessory volumes.
 
     Looks for snapshots in the given zone whose volume name matches
-    {network_name}-webdata and {network_name}-{name}data.  Returns the
+    {network_name}-web-data and {network_name}-{name}-data.  Returns the
     most recent snapshot of each type.
     """
     data = cmk("list", "snapshots", f"zoneid={zone_id}",
@@ -416,23 +416,23 @@ def find_latest_snapshots(network_name, zone_id, accessory_names):
     result = {}
 
     # Web data disk
-    web_vol_name = f"{network_name}-webdata"
+    web_vol_name = f"{network_name}-web-data"
     web_snaps = sorted(
         [s for s in snapshots
          if s.get("volumename") == web_vol_name and s.get("state") == "BackedUp"],
         key=lambda s: s["created"], reverse=True)
     if web_snaps:
-        result["webdata"] = web_snaps[0]
+        result["web-data"] = web_snaps[0]
 
     # Accessory data disks
     for acc_name in accessory_names:
-        vol_name = f"{network_name}-{acc_name}data"
+        vol_name = f"{network_name}-{acc_name}-data"
         acc_snaps = sorted(
             [s for s in snapshots
              if s.get("volumename") == vol_name and s.get("state") == "BackedUp"],
             key=lambda s: s["created"], reverse=True)
         if acc_snaps:
-            result[f"{acc_name}data"] = acc_snaps[0]
+            result[f"{acc_name}-data"] = acc_snaps[0]
 
     return result
 
@@ -455,13 +455,13 @@ def recovery_preflight(network_name, zone_id, accessory_names):
             f"target zone. Teardown the existing deployment first.")
 
     # Check no existing volumes
-    web_vol_name = f"{network_name}-webdata"
+    web_vol_name = f"{network_name}-web-data"
     if find_volume(web_vol_name, zone_id):
         raise RuntimeError(
             f"Cannot recover: volume '{web_vol_name}' already exists in "
             f"target zone. Teardown the existing deployment first.")
     for acc_name in accessory_names:
-        vol_name = f"{network_name}-{acc_name}data"
+        vol_name = f"{network_name}-{acc_name}-data"
         if find_volume(vol_name, zone_id):
             raise RuntimeError(
                 f"Cannot recover: volume '{vol_name}' already exists in "
@@ -469,22 +469,22 @@ def recovery_preflight(network_name, zone_id, accessory_names):
 
     # Find snapshots
     snapshots = find_latest_snapshots(network_name, zone_id, accessory_names)
-    if "webdata" not in snapshots:
+    if "web-data" not in snapshots:
         raise RuntimeError(
             f"Cannot recover: no web data snapshot found for '{network_name}' "
             f"in target zone. Ensure snapshots have been replicated.")
     for acc_name in accessory_names:
-        key = f"{acc_name}data"
+        key = f"{acc_name}-data"
         if key not in snapshots:
             raise RuntimeError(
                 f"Cannot recover: no {acc_name} data snapshot found for "
                 f"'{network_name}' in target zone. Ensure snapshots have "
                 f"been replicated.")
 
-    print(f"  Web data snapshot: {snapshots['webdata']['id']} "
-          f"(created {snapshots['webdata']['created']})")
+    print(f"  Web data snapshot: {snapshots['web-data']['id']} "
+          f"(created {snapshots['web-data']['created']})")
     for acc_name in accessory_names:
-        key = f"{acc_name}data"
+        key = f"{acc_name}-data"
         if key in snapshots:
             print(f"  {acc_name} snapshot: {snapshots[key]['id']} "
                   f"(created {snapshots[key]['created']})")
@@ -584,7 +584,7 @@ def provision(config, repo_name, unique_id, env_name, public_key, recover=False)
     network_name = f"{repo_name}-{unique_id}-{env_name}"
     keypair_name = f"{network_name}-key"
     web_vm_name = "web"
-    web_disk_name = f"{network_name}-webdata"
+    web_disk_name = f"{network_name}-web-data"
 
     # Build accessory name list for snapshot/recovery lookups
     accessory_names = [a["name"] for a in accessories]
@@ -847,15 +847,15 @@ def provision(config, repo_name, unique_id, env_name, public_key, recover=False)
     if recover:
         print("\nRecovering data disks from snapshots...")
         web_vol_id = create_disk_from_snapshot(
-            web_disk_name, recovery_snapshots["webdata"]["id"],
+            web_disk_name, recovery_snapshots["web-data"]["id"],
             web_vm_id, network_name, zone_id, "Web data disk")
         results["web_volume_id"] = web_vol_id
 
         for acc in accessories:
             acc_name = acc["name"]
-            acc_disk_name = f"{network_name}-{acc_name}data"
+            acc_disk_name = f"{network_name}-{acc_name}-data"
             acc_vol_id = create_disk_from_snapshot(
-                acc_disk_name, recovery_snapshots[f"{acc_name}data"]["id"],
+                acc_disk_name, recovery_snapshots[f"{acc_name}-data"]["id"],
                 acc_results[acc_name]["vm_id"], network_name, zone_id,
                 f"{acc_name} data disk")
             acc_results[acc_name]["volume_id"] = acc_vol_id
@@ -868,7 +868,7 @@ def provision(config, repo_name, unique_id, env_name, public_key, recover=False)
 
         for acc in accessories:
             acc_name = acc["name"]
-            acc_disk_name = f"{network_name}-{acc_name}data"
+            acc_disk_name = f"{network_name}-{acc_name}-data"
             acc_vol_id = create_disk(acc_disk_name, disk_offering_id, zone_id,
                                      acc["disk_size_gb"],
                                      acc_results[acc_name]["vm_id"],

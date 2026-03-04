@@ -1644,23 +1644,23 @@ class E2ETestRunner:
                               "Manual db snapshot created")
 
             # 6. Wait for snapshots in both ZP01 and ZP02
-            webdata_name = f"{network_name}-webdata"
-            dbdata_name = f"{network_name}-dbdata"
+            web_data_name = f"{network_name}-web-data"
+            db_data_name = f"{network_name}-db-data"
 
             s.assert_true(
-                wait_for_snapshot_in_zone(webdata_name, network_name, "ZP01",
+                wait_for_snapshot_in_zone(web_data_name, network_name, "ZP01",
                                          timeout=600),
                 "Web snapshot ready in ZP01")
             s.assert_true(
-                wait_for_snapshot_in_zone(dbdata_name, network_name, "ZP01",
+                wait_for_snapshot_in_zone(db_data_name, network_name, "ZP01",
                                          timeout=600),
                 "DB snapshot ready in ZP01")
             s.assert_true(
-                wait_for_snapshot_in_zone(webdata_name, network_name, "ZP02",
+                wait_for_snapshot_in_zone(web_data_name, network_name, "ZP02",
                                          timeout=900),
                 "Web snapshot replicated to ZP02")
             s.assert_true(
-                wait_for_snapshot_in_zone(dbdata_name, network_name, "ZP02",
+                wait_for_snapshot_in_zone(db_data_name, network_name, "ZP02",
                                          timeout=900),
                 "DB snapshot replicated to ZP02")
 

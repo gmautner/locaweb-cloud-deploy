@@ -91,7 +91,7 @@ Examples (with env_name `preview`):
 - Worker VMs: `my-app-123456789-preview-worker-1`, `my-app-123456789-preview-worker-2`, ...
 - Database VM: `my-app-123456789-preview-db`
 - Blob disk: `my-app-123456789-preview-blob`
-- Database disk: `my-app-123456789-preview-dbdata`
+- Database disk: `my-app-123456789-preview-db-data`
 
 ---
 
@@ -188,7 +188,7 @@ The `zone` input is passed as `--zone` to the teardown script, so only resources
 **Destruction sequence (8 steps):**
 
 1. Delete snapshot policies for all tagged data volumes (zone-scoped).
-2. Detach and delete data volumes (blob, dbdata).
+2. Detach and delete data volumes (blob, db-data).
 3. Disable static NAT on all non-source-NAT public IPs.
 4. Delete firewall rules on all public IPs.
 5. Release (disassociate) public IPs.
@@ -282,7 +282,7 @@ A Python script that uses the CloudMonkey CLI (`cmk`) to interact with the Cloud
 5. Remove excess workers (scale-down).
 6. Assign public IPs with static NAT (1:1 per VM).
 7. Create firewall rules (SSH+HTTP+HTTPS for web, SSH only for workers and DB).
-8. Create and attach data disks (blob for web, dbdata for DB). In recovery mode, disks are created from snapshots instead of blank.
+8. Create and attach data disks (blob for web, db-data for DB). In recovery mode, disks are created from snapshots instead of blank.
 9. Create daily snapshot policies with cross-zone replication.
 10. Retrieve internal (private) IPs for inter-VM communication.
 
