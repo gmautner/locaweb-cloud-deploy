@@ -49,7 +49,10 @@ Caller repo                          gmautner/locaweb-cloud-provision
 |     job: infra  ------------>      |     infrastructure only)    |
 |     job: deploy       |            |   teardown.yml (destroys    |
 |       (Kamal deploy)  |            |     all resources)          |
-|   teardown.yml  ------------>      +-----------------------------+
+|   teardown.yml  ------------>      |   rotate-ssh-key.yml        |
+|   rotate-ssh-key.yml ----->      |     (rotates SSH keys on    |
+|                       |            |      existing VMs)          |
++-----------------------+            +-----------------------------+
 +-----------------------+
 | Dockerfile (root)     |
 | Source code           |

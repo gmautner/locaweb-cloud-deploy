@@ -9,6 +9,7 @@
 - [Deploy Output Reference](#deploy-output-reference)
 - [Complete Example (All Inputs)](#complete-example-all-inputs)
 - [Workflow Permissions](#workflow-permissions)
+- [SSH Key Rotation](#ssh-key-rotation)
 
 ## Two-Job Pattern
 
@@ -310,4 +311,69 @@ permissions:
   packages: write
 ```
 
-`packages: write` is required because the caller's deploy job pushes the container image to ghcr.io via Kamal. The infra workflow (`provision.yml`) only needs `contents: read`. The teardown workflow does not need `packages: write`.
+`packages: write` is required because the caller's deploy job pushes the container image to ghcr.io via Kamal. The infra workflow (`provision.yml`) only needs `contents: read`. The teardown and rotate-ssh-key workflows do not need `packages: write`.
+
+## SSH Key Rotation
+
+Use `rotate-ssh-key.yml` to apply a new SSH key to all VMs in an existing deployment. This is needed after replacing the `SSH_PRIVATE_KEY` GitHub secret (lost key, key compromise, or routine rotation).
+
+**Prerequisites (handled by the caller):**
+1. Generate a new SSH key pair locally
+2. Update the GitHub secret with the new private key
+
+The workflow handles everything else: replacing the keypair in CloudStack and rotating the key on each VM (stop, reset, start, purge old keys). VMs are rotated in order — accessories first, workers next, web last — to minimize user-facing downtime.
+
+### Caller example (preview)
+
+```yaml
+# .github/workflows/rotate-ssh-key-preview.yml
+name: Rotate SSH Key (Preview)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rotate:
+    uses: gmautner/locaweb-cloud-provision/.github/workflows/rotate-ssh-key.yml@v1
+    with:
+      env_name: "preview"
+    secrets:
+      CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
+      CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+```
+
+### Caller example (production)
+
+```yaml
+# .github/workflows/rotate-ssh-key-production.yml
+name: Rotate SSH Key (Production)
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rotate:
+    uses: gmautner/locaweb-cloud-provision/.github/workflows/rotate-ssh-key.yml@v1
+    with:
+      env_name: "production"
+    secrets:
+      CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
+      CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
+      SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY_PRODUCTION }}
+```
+
+### Safety checks
+
+The workflow refuses to run if:
+- The `SSH_PRIVATE_KEY` secret is empty
+- The keypair does not already exist in CloudStack (no pre-existing deployment)
+- The network does not exist or has no VMs
+
+### Downtime
+
+Each VM is stopped briefly for the SSH key reset. The rotation is sequential (one VM at a time) to avoid full outage. Expect a few minutes of downtime per VM.

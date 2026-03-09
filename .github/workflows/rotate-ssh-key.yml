@@ -1,0 +1,105 @@
+# SSH Key Rotation Workflow
+#
+# Rotates the SSH key on all VMs of an existing deployment. Use this after
+# replacing the SSH_PRIVATE_KEY GitHub secret (e.g. lost key, key compromise,
+# or routine rotation).
+#
+# The caller is responsible for generating the new key pair and updating the
+# GitHub secret before invoking this workflow.
+#
+# Pre-conditions enforced by the script:
+#   - The keypair must already exist in CloudStack (existing deployment)
+#   - The network must exist with running VMs
+#
+# Required GitHub Secrets:
+#   CLOUDSTACK_API_KEY    - CloudStack API key
+#   CLOUDSTACK_SECRET_KEY - CloudStack secret key
+#   SSH_PRIVATE_KEY       - The NEW SSH private key (already updated in GitHub)
+
+name: Rotate SSH Key
+
+permissions:
+  contents: read
+
+concurrency:
+  group: infra-${{ github.repository }}-${{ inputs.env_name || 'preview' }}
+  cancel-in-progress: false
+
+on:
+  workflow_dispatch:
+    inputs:
+      env_name:
+        description: "Environment name (e.g. preview, staging, production)"
+        required: false
+        default: "preview"
+
+  workflow_call:
+    inputs:
+      env_name:
+        type: string
+        default: "preview"
+    secrets:
+      CLOUDSTACK_API_KEY:
+        required: true
+      CLOUDSTACK_SECRET_KEY:
+        required: true
+      SSH_PRIVATE_KEY:
+        required: true
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout infrastructure scripts
+        uses: actions/checkout@v4
+        with:
+          repository: gmautner/locaweb-cloud-provision
+          path: _infra
+
+      - name: Extract SSH keys
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SSH_PRIVATE_KEY" ]; then
+            echo "ERROR: SSH_PRIVATE_KEY secret is not set."
+            exit 1
+          fi
+          install -m 600 /dev/null /tmp/ssh_key
+          printf '%s\n' "$SSH_PRIVATE_KEY" > /tmp/ssh_key
+          ssh-keygen -y -f /tmp/ssh_key > /tmp/ssh_key.pub
+          echo "SSH keys extracted successfully."
+
+      - name: Install and configure CloudMonkey
+        env:
+          CLOUDSTACK_API_KEY: ${{ secrets.CLOUDSTACK_API_KEY }}
+          CLOUDSTACK_SECRET_KEY: ${{ secrets.CLOUDSTACK_SECRET_KEY }}
+        run: |
+          wget -q https://github.com/apache/cloudstack-cloudmonkey/releases/latest/download/cmk.linux.x86-64
+          chmod +x cmk.linux.x86-64
+          sudo mv cmk.linux.x86-64 /usr/local/bin/cmk
+          cmk set url "https://painel-cloud.locaweb.com.br/client/api"
+          cmk set apikey "$CLOUDSTACK_API_KEY"
+          cmk set secretkey "$CLOUDSTACK_SECRET_KEY"
+          cmk set output json
+          cmk sync
+          echo "Verifying CloudStack connectivity..."
+          cmk list zones filter=name
+          echo "CloudMonkey configured successfully."
+
+      - name: Rotate SSH key
+        run: |
+          python3 -u _infra/scripts/rotate_ssh_key.py \
+            --network-name "${{ github.event.repository.name }}-${{ github.repository_id }}-${{ inputs.env_name || 'preview' }}" \
+            --public-key /tmp/ssh_key.pub \
+            --ssh-key /tmp/ssh_key
+
+      - name: Print summary
+        run: |
+          cat << 'EOF' >> $GITHUB_STEP_SUMMARY
+          ## SSH Key Rotation Complete
+
+          All VMs in **${{ github.event.repository.name }}-${{ github.repository_id }}-${{ inputs.env_name || 'preview' }}** have been updated with the new SSH key.
+
+          The old key is no longer valid for any VM in this deployment.
+          EOF

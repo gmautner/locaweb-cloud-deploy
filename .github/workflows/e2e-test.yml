@@ -43,6 +43,7 @@ on:
           - scale-up
           - scale-down
           - recovery
+          - rotate-ssh-key
           - all
 
 jobs:

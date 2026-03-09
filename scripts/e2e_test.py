@@ -401,6 +401,16 @@ def trigger_teardown(env_name=DEFAULT_ENV_NAME, zone=None, ref=None):
     print("  Teardown complete")
 
 
+def trigger_rotate_ssh_key(env_name=DEFAULT_ENV_NAME, ref=None):
+    """Trigger rotate-ssh-key.yml and wait for completion."""
+    print("\n  --- Triggering SSH key rotation workflow ---")
+    run_id = trigger_workflow("rotate-ssh-key.yml", {
+        "env_name": env_name,
+    }, ref=ref)
+    wait_for_run(run_id)
+    print("  SSH key rotation complete")
+
+
 # ---------------------------------------------------------------------------
 # Destination file management (mirrors agent behavior)
 # ---------------------------------------------------------------------------
@@ -949,12 +959,14 @@ class E2ETestRunner:
             "scale-up": [self._scenario_scale_up],
             "scale-down": [self._scenario_scale_down],
             "recovery": [self._scenario_recovery],
+            "rotate-ssh-key": [self._scenario_rotate_ssh_key],
             "all": [
                 self._scenario_complete,
                 self._scenario_web_only,
                 self._scenario_scale_up,
                 self._scenario_scale_down,
                 self._scenario_recovery,
+                self._scenario_rotate_ssh_key,
             ],
         }
 
@@ -1732,6 +1744,132 @@ class E2ETestRunner:
 
         self.scenarios.append(s)
 
+    # ------------------------------------------------------------------
+    # Scenario: SSH Key Rotation
+    # ------------------------------------------------------------------
+
+    def _scenario_rotate_ssh_key(self):
+        s = TestScenario("SSH Key Rotation")
+        secret_changed = False
+        old_key_path = "/tmp/ssh_key_old"
+        with s:
+            # Prepare destination file (1 worker + db)
+            self.prepare_deploy(DEFAULT_ENV_NAME, workers=1,
+                                accessories=["db"])
+
+            # Deploy
+            output = trigger_deploy({
+                "zone": ZONE,
+                "env_name": DEFAULT_ENV_NAME,
+                "workers_replicas": "1",
+                "accessories": '[{"name":"db","plan":"medium","disk_size_gb":20}]',
+            }, ref=self.branch)
+
+            web_ip = output.get("web_ip", "")
+            worker_ips = output.get("worker_ips", [])
+            db_ip = output.get("accessories", {}).get("db", {}).get("ip", "")
+
+            s.assert_true(web_ip, "Deploy produced web_ip")
+            s.assert_true(len(worker_ips) >= 1, "Deploy produced worker_ips")
+            s.assert_true(db_ip, "Deploy produced db accessory ip")
+
+            if not web_ip:
+                self.scenarios.append(s)
+                return
+
+            all_ips = ([("web", web_ip)]
+                       + [(f"worker-{i}", w) for i, w in enumerate(worker_ips, 1)]
+                       + [("db", db_ip)])
+
+            # Verify SSH works with original key on all VMs
+            for label, ip in all_ips:
+                s.assert_true(
+                    self.ssh.wait_for_ssh(ip, timeout=120),
+                    f"SSH with original key: {label} reachable")
+
+            # Save old key for later negative test and restore
+            subprocess.run(["cp", SSH_KEY_PATH, old_key_path], check=True)
+            subprocess.run(["cp", f"{SSH_KEY_PATH}.pub",
+                            f"{old_key_path}.pub"], check=True)
+
+            # Generate a new SSH key pair
+            print("\n  --- Generating new SSH key pair ---")
+            new_key_path = "/tmp/ssh_key_new"
+            subprocess.run([
+                "ssh-keygen", "-t", "ed25519",
+                "-f", new_key_path,
+                "-N", "",
+                "-C", "e2e-rotated-key",
+            ], check=True, capture_output=True)
+            os.chmod(new_key_path, 0o600)
+            print("  New key pair generated.")
+
+            # Update the GitHub secret with the new key
+            print("  Updating SSH_PRIVATE_KEY GitHub secret...")
+            with open(new_key_path) as f:
+                new_private_key = f.read()
+            result = subprocess.run(
+                ["gh", "secret", "set", "SSH_PRIVATE_KEY",
+                 "-R", REPO_FULL, "--body", new_private_key],
+                capture_output=True, text=True)
+            s.assert_true(result.returncode == 0,
+                          "GitHub secret SSH_PRIVATE_KEY updated")
+            secret_changed = True
+
+            # Trigger the rotation workflow
+            trigger_rotate_ssh_key(DEFAULT_ENV_NAME, ref=self.branch)
+
+            # Switch SSHVerifier to the new key
+            new_ssh = SSHVerifier(key_path=new_key_path)
+
+            # Verify SSH works with NEW key on all VMs
+            for label, ip in all_ips:
+                s.assert_true(
+                    new_ssh.wait_for_ssh(ip, timeout=120),
+                    f"SSH with new key: {label} reachable")
+
+            # Verify OLD key is rejected on all VMs
+            old_ssh = SSHVerifier(key_path=old_key_path)
+            for label, ip in all_ips:
+                rc, _, _ = old_ssh.run_command(ip, "true")
+                s.assert_true(rc != 0,
+                              f"SSH with old key: {label} rejected")
+
+            # App still works after rotation
+            http = HTTPVerifier(web_ip)
+            s.assert_true(
+                http.wait_for_healthy("/up", timeout=120),
+                "HTTP /up returns 200 (after rotation)")
+
+            # Teardown
+            trigger_teardown(DEFAULT_ENV_NAME)
+
+        # Restore original secret and key files (outside with block so it
+        # runs even if the scenario fails partway through)
+        if secret_changed:
+            print("\n  --- Restoring original SSH_PRIVATE_KEY secret ---")
+            try:
+                with open(old_key_path) as f:
+                    original_key = f.read()
+                result = subprocess.run(
+                    ["gh", "secret", "set", "SSH_PRIVATE_KEY",
+                     "-R", REPO_FULL, "--body", original_key],
+                    capture_output=True, text=True)
+                if result.returncode == 0:
+                    print("  Original secret restored.")
+                else:
+                    print(f"  Warning: failed to restore secret: "
+                          f"{result.stderr}")
+            except Exception as e:
+                print(f"  Warning: failed to restore secret: {e}")
+            # Restore the canonical key files and SSH verifier
+            subprocess.run(["cp", old_key_path, SSH_KEY_PATH], check=False)
+            subprocess.run(["cp", f"{old_key_path}.pub",
+                            f"{SSH_KEY_PATH}.pub"], check=False)
+            self.ssh = SSHVerifier()
+
+        self.scenarios.append(s)
+
 
 # ---------------------------------------------------------------------------
 # Main
@@ -1743,7 +1881,7 @@ def main():
     print(f"# Repository: {REPO_FULL}")
     print(f"# Zone:       {ZONE}")
     print(f"# Scenario:   {SCENARIO}")
-    print(f"# Network:    {make_network_name(DEFAULT_ENV_NAME)} (default)")
+    print(f"# Network:    {make_network_name(DEFAULT_ENV_NAME)} (default / rotate-ssh-key)")
     print(f"#             {make_network_name('e2etest')} (scale-up)")
     print(f"#             {make_network_name(DEFAULT_ENV_NAME)} @ ZP02 (recovery)")
     print(f"{'#' * 60}")
