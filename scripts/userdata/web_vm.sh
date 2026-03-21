@@ -4,6 +4,10 @@
 # Docker is installed automatically by Kamal on first deploy.
 set -euo pipefail
 
+# --- Use global Ubuntu mirror to avoid regional mirror sync issues ---
+sed -i 's|br\.archive\.ubuntu\.com|archive.ubuntu.com|g' /etc/apt/sources.list.d/*.sources 2>/dev/null || \
+  sed -i 's|br\.archive\.ubuntu\.com|archive.ubuntu.com|g' /etc/apt/sources.list 2>/dev/null || true
+
 # --- fail2ban: block SSH brute-force attempts ---
 apt-get update -qq
 apt-get install -y -qq fail2ban
