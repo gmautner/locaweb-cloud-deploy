@@ -263,7 +263,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: echo "${{ needs.infra.outputs.infra_env }}" >> "$GITHUB_ENV"
       # ... Install Kamal, prepare SSH key, deploy with Kamal
-      # Use needs.infra.outputs.infrastructure_changed to decide kamal setup vs deploy
+      # Always run kamal setup (idempotent: installs Docker only if missing, bootstraps accessories safely)
       # Use needs.infra.outputs.scaled_accessories to reboot rescaled accessories
 ```
 

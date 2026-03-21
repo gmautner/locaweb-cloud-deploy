@@ -13,8 +13,6 @@ The deploy workflow takes 4-6 minutes on every run, even when infrastructure inp
 - **Build configuration** (~2s) assembles the same JSON config.
 - **Install Kamal** (~20-30s) runs `gem install` from RubyGems on every run.
 
-Additionally, `kamal setup` (which installs Docker and bootstraps accessories) runs on every deploy, even when the servers already have Docker installed and accessories running from a previous deploy.
-
 For vibe coders iterating on their apps, the deploy feedback loop needs to be as fast as possible.
 
 ## Decision
@@ -33,12 +31,11 @@ Cache the gem installation directory (`~/.gems`) with key `kamal-{runner.os}-v1`
 
 Gems are installed to `~/.gems` (user-writable) instead of `/var/lib/gems` (root-owned) because `actions/cache` cannot restore files to root-owned directories.
 
-### kamal setup vs kamal deploy
+### Always kamal setup
 
-Use the infrastructure cache hit as a signal for server readiness:
+`kamal setup` runs on every deploy regardless of cache state. It is idempotent: it installs Docker only on hosts where it is missing, bootstraps accessories only if they are not already running, and performs a zero-downtime deploy of the application. This simplifies the workflow by removing the need to branch between `kamal setup` and `kamal deploy` based on cache state.
 
-- **Cache miss** (first deploy or inputs changed): Run `kamal setup`, which installs Docker, bootstraps accessories, and deploys the application.
-- **Cache hit** (consecutive deploy, same inputs): Run `kamal deploy`, which skips Docker installation and accessory bootstrapping, only building and deploying the new application image.
+Before `kamal setup`, the workflow runs `kamal proxy boot || kamal proxy reboot -y || true` to ensure the kamal-proxy version is current. This is a no-op on fresh VMs where Docker is not yet installed.
 
 ### Safety mechanisms
 
@@ -52,9 +49,9 @@ Use the infrastructure cache hit as a signal for server readiness:
 ### Positive
 
 - Consecutive deploys with unchanged inputs save ~110-220s (skipping provisioning, CloudMonkey, unattended upgrades, and gem install).
-- `kamal deploy` is faster than `kamal setup` because it skips Docker installation and accessory bootstrapping.
 - No manual list of cache-participating fields to maintain — adding a new workflow input automatically participates.
 - The Kamal gem cache is persistent across all deploys (OS-keyed), saving ~20-30s even on cache-miss infrastructure runs.
+- Always running `kamal setup` eliminates the setup-vs-deploy branching logic, reducing workflow complexity with negligible overhead (setup is idempotent and skips already-installed components).
 
 ### Negative
 

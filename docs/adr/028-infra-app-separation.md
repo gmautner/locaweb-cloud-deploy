@@ -24,7 +24,7 @@ Split `deploy.yml` into an **infra-only** workflow that provisions CloudStack re
 - **Reduced permissions:** `contents: read, packages: write` to `contents: read`.
 - **Renamed concurrency group:** `deploy-*` to `infra-*`.
 - **Added outputs:**
-  - `infrastructure_changed` — `"true"` on fresh provision (cache miss), `"false"` on cache hit. Caller uses this to decide between `kamal setup` and `kamal deploy`.
+  - `infrastructure_changed` — `"true"` on fresh provision (cache miss), `"false"` on cache hit. Informational only — callers always run `kamal setup` (idempotent).
   - `scaled_accessories` — JSON array of accessory names whose VMs were rescaled. Caller iterates this to reboot affected accessories.
   - `infra_env` — Multiline `KEY=VALUE` string ready to load into `GITHUB_ENV`. Contains `INFRA_WEB_IP`, `INFRA_<NAME>_IP` per accessory, and `INFRA_WORKER_IP_<N>` per worker.
 

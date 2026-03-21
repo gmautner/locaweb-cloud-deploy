@@ -118,7 +118,7 @@ A single-job reusable workflow that provisions CloudStack infrastructure and out
 | `web_ip` | string | Public IP of the web VM |
 | `worker_ips` | JSON array | Public IPs of worker VMs |
 | `accessory_ips` | JSON object | Public IPs of accessory VMs (keyed by name) |
-| `infrastructure_changed` | `"true"/"false"` | `"true"` on fresh provision (cache miss), `"false"` on cache hit. Caller uses to decide `kamal setup` vs `kamal deploy`. |
+| `infrastructure_changed` | `"true"/"false"` | `"true"` on fresh provision (cache miss), `"false"` on cache hit. Informational only — callers always run `kamal setup` (idempotent). |
 | `scaled_accessories` | JSON array | Names of accessories whose VMs were rescaled. Caller reboots these. |
 | `infra_env` | multiline string | `KEY=VALUE` pairs ready to load into `GITHUB_ENV`. Contains `INFRA_WEB_IP`, `INFRA_<NAME>_IP` per accessory, `INFRA_WORKER_IP_<N>` per worker. |
 
@@ -166,7 +166,7 @@ A two-job `workflow_dispatch` workflow for internal development and E2E testing.
 5. **Prepare SSH key** -- Reads `SSH_PRIVATE_KEY` from secrets (separate runner from infra job).
 6. **Expose GHA runtime for Docker cache** -- `actions/github-script@v7`.
 7. **Export application secrets** -- Parses `inputs.secret_env_vars` via python-dotenv, writes to `GITHUB_ENV`.
-8. **Deploy with Kamal** -- Uses `infrastructure_changed` output to decide `kamal setup` vs `kamal deploy`.
+8. **Deploy with Kamal** -- Boots or reboots kamal-proxy to ensure the proxy version is current, then runs `kamal setup` (idempotent: installs Docker only if missing, bootstraps accessories safely).
 9. **Reboot scaled accessories** -- Iterates `scaled_accessories` output.
 10. **Print deployment summary** -- Reads `INFRA_WEB_IP` from env.
 
@@ -538,23 +538,18 @@ The web VM mounts at `/data/blobs`, the DB VM mounts at `/data/db`. The worker s
 4. Generate Kamal config from provision output (cached or fresh)
    |
    v
-5a. [FIRST DEPLOY] kamal setup (SSH -> each VM)
+5. kamal proxy boot/reboot (SSH -> web VM)
+   |  (ensures proxy version is current; no-op on fresh VMs without Docker)
    |
-   +-- Installs Docker on all hosts
+   v
+6. kamal setup (SSH -> each VM, idempotent)
+   |
+   +-- Installs Docker on hosts where missing
    +-- Logs into ghcr.io registry
    +-- Builds Docker image (amd64)
    +-- Pushes image to ghcr.io/<owner>/<repo>:<sha>
-   +-- Boots postgres accessory on DB VM (if enabled)
-   +-- Deploys web container behind kamal-proxy
-   +-- Deploys worker containers (if enabled)
-   |
-5b. [CONSECUTIVE DEPLOY] kamal deploy (SSH -> each VM)
-   |  (Docker already installed, accessories already running)
-   |
-   +-- Logs into ghcr.io registry
-   +-- Builds Docker image (amd64)
-   +-- Pushes image to ghcr.io/<owner>/<repo>:<sha>
-   +-- Deploys web container behind kamal-proxy (zero-downtime swap)
+   +-- Boots postgres accessory on DB VM (if enabled, skips if already running)
+   +-- Deploys web container behind kamal-proxy (zero-downtime swap if already running)
    +-- Deploys worker containers (if enabled)
    |
    v
