@@ -155,6 +155,8 @@ jobs:
         env:
           KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Ensure proxy is current: reboot if version changed, ignore if first run (no Docker yet)
+          kamal proxy boot -d ${{ inputs.env_name || 'preview' }} || kamal proxy reboot -y -d ${{ inputs.env_name || 'preview' }} || true
           kamal setup -d ${{ inputs.env_name || 'preview' }}
           kamal accessory reboot all -d ${{ inputs.env_name || 'preview' }}
 

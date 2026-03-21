@@ -76,6 +76,8 @@ jobs:
           KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
           MY_SECRET: sandbox-secret
         run: |
+          # Ensure proxy is current: reboot if version changed, ignore if first run (no Docker yet)
+          kamal proxy boot -d sandbox || kamal proxy reboot -y -d sandbox || true
           kamal setup -d sandbox
           kamal accessory reboot all -d sandbox
 
