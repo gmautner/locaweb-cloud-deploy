@@ -325,16 +325,21 @@ def resize_volume(vol, desired_gb, desc):
         vol: Volume dict from find_volume (must include 'size' in bytes).
         desired_gb: Desired size in GB.
         desc: Human-readable description for log messages.
+
+    Returns:
+        True if the volume was resized, False if no change was needed.
     """
     current_bytes = vol.get("size", 0)
     desired_bytes = desired_gb * (1024 ** 3)
     if desired_bytes > current_bytes:
         cmk("resize", "volume", f"id={vol['id']}", f"size={desired_gb}")
         print(f"    Resized {desc}: {current_bytes // (1024**3)}GB -> {desired_gb}GB")
+        return True
     elif desired_bytes < current_bytes:
         raise RuntimeError(
             f"Cannot shrink {desc}: current {current_bytes // (1024**3)}GB "
             f"> desired {desired_gb}GB")
+    return False
 
 
 def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
@@ -343,12 +348,16 @@ def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
 
     If the disk already exists but is smaller than size_gb, it is resized
     in-place.  Shrinking is rejected with an error.
+
+    Returns:
+        (vol_id, resized) where *resized* is True when the volume was grown.
     """
     vol = find_volume(disk_name, zone_id)
+    resized = False
     if vol:
         vol_id = vol["id"]
         print(f"  {desc}: already exists ({vol_id})")
-        resize_volume(vol, size_gb, desc)
+        resized = resize_volume(vol, size_gb, desc)
         if not vol.get("virtualmachineid"):
             cmk("attach", "volume", f"id={vol_id}",
                 f"virtualmachineid={vm_id}")
@@ -370,7 +379,7 @@ def create_disk(disk_name, disk_offering_id, zone_id, size_gb, vm_id,
         cmk("attach", "volume", f"id={vol_id}",
             f"virtualmachineid={vm_id}")
         print(f"    Attached to VM")
-    return vol_id
+    return vol_id, resized
 
 
 def create_snapshot_policy(vol_id, network_name, snapshot_zoneids, desc):
@@ -861,19 +870,21 @@ def provision(config, repo_name, unique_id, env_name, public_key, recover=False)
             acc_results[acc_name]["volume_id"] = acc_vol_id
     else:
         print("\nCreating data disks...")
-        web_vol_id = create_disk(web_disk_name, disk_offering_id, zone_id,
-                                  web_disk_size_gb, web_vm_id,
-                                  network_name, "Web data disk")
+        web_vol_id, web_disk_resized = create_disk(
+            web_disk_name, disk_offering_id, zone_id,
+            web_disk_size_gb, web_vm_id, network_name, "Web data disk")
         results["web_volume_id"] = web_vol_id
+        results["web_disk_resized"] = web_disk_resized
 
         for acc in accessories:
             acc_name = acc["name"]
             acc_disk_name = f"{network_name}-{acc_name}-data"
-            acc_vol_id = create_disk(acc_disk_name, disk_offering_id, zone_id,
-                                     acc["disk_size_gb"],
-                                     acc_results[acc_name]["vm_id"],
-                                     network_name, f"{acc_name} data disk")
+            acc_vol_id, acc_disk_resized = create_disk(
+                acc_disk_name, disk_offering_id, zone_id,
+                acc["disk_size_gb"], acc_results[acc_name]["vm_id"],
+                network_name, f"{acc_name} data disk")
             acc_results[acc_name]["volume_id"] = acc_vol_id
+            acc_results[acc_name]["disk_resized"] = acc_disk_resized
 
     # --- Snapshot Policies ---
     print("\nCreating snapshot policies...")

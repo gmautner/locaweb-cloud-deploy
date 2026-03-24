@@ -18,7 +18,7 @@ CloudStack provides APIs for in-place changes:
 Enhance the provisioning logic to detect and apply configuration changes to existing resources:
 
 1. **VM Scaling:** When an existing VM's `serviceofferingid` differs from the desired offering, stop the VM, call `scaleVirtualMachine`, then start it again. Hot (live) scaling is not attempted because CloudStack rejects it for fixed service offerings, which is always our case.
-2. **Disk Resize (grow only):** When an existing volume's `size` is smaller than the desired size, call `resizeVolume`. If the desired size is smaller than the current size, fail with an error — shrinking is not supported by CloudStack and would cause data loss.
+2. **Disk Resize (grow only):** When an existing volume's `size` is smaller than the desired size, call `resizeVolume`. If the desired size is smaller than the current size, fail with an error — shrinking is not supported by CloudStack and would cause data loss. After the CloudStack-level resize, the provisioning workflow SSHes into the affected VM and runs `resize2fs /dev/vdb` to expand the ext4 filesystem to fill the new block device size. This is an online operation that requires no downtime or unmount.
 3. **No-op on match:** When the offering and disk size already match, the existing skip behavior is preserved.
 
 The `find_vm` helper now returns a full VM dict (including `serviceofferingid`) instead of just the ID string. The `find_volume` helper now includes `size` in its filter. Both changes are internal to the provisioning script and do not affect the output JSON format.

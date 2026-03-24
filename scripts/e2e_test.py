@@ -453,7 +453,7 @@ def write_destination_file(env_name, workers=0, domain=None, accessories=None):
         for name in accessories:
             lines.append(f"  {name}:")
             if name == "db":
-                lines.append(f"    image: supabase/postgres:17.6.1.093")
+                lines.append(f"    image: supabase/postgres:17.6.1.101")
                 lines.append(f"    host: <%= ENV['INFRA_{name.upper()}_IP'] %>")
                 lines.append(f'    port: "5432:5432"')
                 lines.append(f'    cmd: "postgres -D /etc/postgresql'
@@ -629,6 +629,36 @@ class SSHVerifier:
             f"| grep '{mp}$' | awk '{{print $1}}')")
         if rc == 0 and stdout.strip().isdigit():
             return int(stdout.strip())
+        return None
+
+    def get_filesystem_size(self, ip, device="/dev/vdb"):
+        """Get the ext4 filesystem size in bytes.
+
+        Uses tune2fs -l (read-only) to read block count and block size.
+        After resize2fs, this matches the block device size exactly.
+        Before resize2fs, it reflects the old (smaller) size — use this
+        to verify that the filesystem was actually expanded, not just the
+        block device.
+        """
+        rc, stdout, _ = self.run_command(
+            ip,
+            f"tune2fs -l {device} 2>/dev/null "
+            f"| grep -E '^Block (count|size):'")
+        if rc != 0:
+            return None
+        block_count = None
+        block_size = None
+        for line in stdout.strip().split("\n"):
+            if "Block count" in line:
+                val = line.split(":")[1].strip()
+                if val.isdigit():
+                    block_count = int(val)
+            elif "Block size" in line:
+                val = line.split(":")[1].strip()
+                if val.isdigit():
+                    block_size = int(val)
+        if block_count and block_size:
+            return block_count * block_size
         return None
 
     def verify_auto_upgrades_enabled(self, ip):
@@ -1416,7 +1446,10 @@ class E2ETestRunner:
                 "SSH to web VM after scale: reachable")
             web_size2 = self.ssh.get_block_device_size(web_ip2, "/data/")
             s.assert_equal(web_size2, 35 * 1024**3,
-                           "Web disk grew to 35GB after scale")
+                           "Web block device grew to 35GB after scale")
+            web_fs2 = self.ssh.get_filesystem_size(web_ip2)
+            s.assert_equal(web_fs2, 35 * 1024**3,
+                           "Web filesystem expanded to 35GB after scale")
 
             db_ip2 = output2.get("accessories", {}).get("db", {}).get("ip", "")
             if db_ip2:
@@ -1425,7 +1458,10 @@ class E2ETestRunner:
                     "SSH to DB VM after scale: reachable")
                 db_size2 = self.ssh.get_block_device_size(db_ip2, "/data/")
                 s.assert_equal(db_size2, 30 * 1024**3,
-                               "DB disk grew to 30GB after scale")
+                               "DB block device grew to 30GB after scale")
+                db_fs2 = self.ssh.get_filesystem_size(db_ip2)
+                s.assert_equal(db_fs2, 30 * 1024**3,
+                               "DB filesystem expanded to 30GB after scale")
 
             # Update Route53 A record (IP may have changed after scale)
             domain_ip = web_ip2

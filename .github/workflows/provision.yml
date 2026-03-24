@@ -232,6 +232,13 @@ jobs:
             --output /tmp/provision-output.json \
             $recover_flag
 
+      - name: Resize filesystems after disk expansion
+        if: steps.infra-cache.outputs.cache-hit != 'true'
+        run: |
+          python3 -u _infra/scripts/resize_filesystems.py \
+            --ssh-key /tmp/ssh_key \
+            --provision-output /tmp/provision-output.json
+
       - name: Set outputs
         id: outputs
         env:
